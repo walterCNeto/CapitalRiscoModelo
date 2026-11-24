@@ -11,8 +11,11 @@ import rmcap as R
 st.set_page_config(page_title="Capital de Risco de Modelo", layout="wide")
 
 st.markdown("""<style>
-.metric-box{border:1px solid #d0d4e4;border-radius:6px;padding:10px 14px;background:#f7f8fc}
-.metric-box .v{font-size:24px;font-weight:700;color:#101448}.metric-box .l{font-size:13px;color:#555}
+.metric-box{border:1px solid #d0d4e4;border-radius:6px;padding:10px 14px;background:#f7f8fc;height:112px;
+display:flex;flex-direction:column;justify-content:space-between;box-sizing:border-box}
+.metric-box .l{font-size:13px;color:#555;line-height:1.3;min-height:2.6em;overflow:hidden}
+.metric-box .v{font-size:24px;font-weight:700;color:#101448;line-height:1.1;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}
 .mx{border-collapse:separate;border-spacing:5px;margin:auto}
 .mx td.c{width:86px;height:62px;text-align:center;border-radius:6px;border:1px solid #444;font-family:Arial}
 .mx td.c b{font-size:20px;display:block}.mx td.c span{font-size:13px}
