@@ -29,12 +29,16 @@ streamlit run app.py
 - **Cenários**: capital se todos os modelos, ou só os pendentes, fossem validados com cada nota.
 - **Racional dos FPRs**: relatório com a derivação dos FPRs (P, S, dois canais, ω, cauda Beta-PERT,
   arredondamento, λ), com download em HTML.
+- **Memorial de cálculo**: paper em PDF gerado a partir da base de entrada atual (exemplo ou editada), com
+  racional da modelagem, execução do cálculo por modelo, cenários, premissa e RAS e referências teóricas.
 
 ## Arquivos
 
 - `app.py`: interface.
 - `calculo.py`: ligação entre o inventário editável e o motor; relatório e exportação.
 - `rmcap.py`: motor da metodologia (calibração, régua, capital).
+- `memorial.py`: geração do memorial de cálculo em PDF (reportlab).
+- `fonts/`: fontes Liberation Serif usadas no PDF (licença SIL OFL 1.1).
 - `.streamlit/config.toml`: tema visual.
 
 Parâmetros na barra lateral: data-base, λ tier M, λ nível 2, cobertura mínima da RAS e modelos fora do escopo do capital (total e validados em dia). A régua vigente é a aprovada (derivada da calibração

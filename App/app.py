@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import calculo as C
+import memorial as MEM
 import rmcap as R
 
 st.set_page_config(page_title="Capital de Risco de Modelo", layout="wide")
@@ -64,8 +65,9 @@ st.title("Capital de risco de modelo")
 st.caption("Pilar 2 · FPR de risco de modelo da régua padronizada × exposição = RWA; capital = 8% × RWA. "
            "Valores em R$ milhões. Inventário e saldos ilustrativos.")
 
-aba_inv, aba_res, aba_ras, aba_mat, aba_cen, aba_rac = st.tabs(
-    ["Inventário", "Resultado", "Premissa e RAS", "Régua e matrizes de FPR", "Cenários", "Racional dos FPRs"])
+aba_inv, aba_res, aba_ras, aba_mat, aba_cen, aba_rac, aba_mem = st.tabs(
+    ["Inventário", "Resultado", "Premissa e RAS", "Régua e matrizes de FPR", "Cenários", "Racional dos FPRs",
+     "Memorial de cálculo"])
 
 # ----------------------------------------------------------------------------- inventário
 with aba_inv:
@@ -323,3 +325,31 @@ with aba_rac:
                               height=360, plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=30),
                               legend=dict(orientation="h", y=-0.15))
             st.plotly_chart(fig, width="stretch")
+
+# ----------------------------------------------------------------------------- memorial de cálculo
+with aba_mem:
+    st.markdown(
+        "Memorial de cálculo em formato de paper (PDF), gerado a partir da base de entrada atual, seja o inventário "
+        "de exemplo ou o editado na aba Inventário, e dos parâmetros da barra lateral. O documento traz:")
+    st.markdown(
+        "- **Escopo e base de entrada:** modelos, tiers, níveis, notas, datas de validação e exposições.\n"
+        "- **Racional da modelagem:** probabilidade de falha (Basileia, 1996), magnitude pela fórmula IRB, dois "
+        "canais de erro e peso ω, cauda Beta-PERT, derivação da régua padronizada e fatores λ.\n"
+        "- **Execução:** situação de validação, FPR, RWA e capital por modelo, exemplos passo a passo, "
+        "consolidação e cenários.\n"
+        "- **Premissa prudencial e RAS, governança e limitações, referências teóricas e regulatórias.**")
+    assinatura = (edit.to_csv(index=False), str(data_base), lam_m, lam_n2, int(tot_fora), int(val_fora), cob_min)
+    if st.button("Gerar memorial de cálculo", type="primary"):
+        with st.spinner("Gerando o memorial..."):
+            cen_m, atual_m, teto_m = C.cenarios(p, inv, data_base)
+            st.session_state["memorial"] = (assinatura, MEM.gerar_pdf(p, inv, data_base, out, rs, cen_m, atual_m,
+                                                                      teto_m))
+    mem = st.session_state.get("memorial")
+    if mem and mem[0] == assinatura:
+        st.success(f"Memorial gerado para a data-base {data_base.strftime('%d/%m/%Y')}: {len(inv)} modelos, "
+                   f"capital de R$ {C.num(out['bruto']['addon'])} milhões.")
+        st.download_button("Baixar memorial (PDF)", data=mem[1],
+                           file_name=f"memorial_capital_risco_modelo_{data_base.strftime('%Y%m%d')}.pdf",
+                           mime="application/pdf")
+    elif mem:
+        st.info("A base de entrada ou os parâmetros mudaram desde a última geração. Gere o memorial novamente.")
