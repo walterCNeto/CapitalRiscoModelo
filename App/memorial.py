@@ -160,7 +160,7 @@ def _fig_cauda(p0, fb):
     lp.lines[0].strokeColor = colors.black
     lp.lines[0].strokeWidth = 1.1
     lp.xValueAxis.valueMin, lp.xValueAxis.valueMax, lp.xValueAxis.valueStep = 0, 2.0, 0.25
-    lp.yValueAxis.valueMin, lp.yValueAxis.valueMax = 0, float(ys.max()) * 1.25
+    lp.yValueAxis.valueMin, lp.yValueAxis.valueMax = 0, float(ys.max()) * 1.45
     for ax in (lp.xValueAxis, lp.yValueAxis):
         ax.labels.fontName = "Serif"
         ax.labels.fontSize = 8
@@ -170,32 +170,60 @@ def _fig_cauda(p0, fb):
     sx = lambda v: lp.x + (v - lp.xValueAxis.valueMin) / (lp.xValueAxis.valueMax - lp.xValueAxis.valueMin) * lp.width
     sy = lambda v: lp.y + (v - lp.yValueAxis.valueMin) / (lp.yValueAxis.valueMax - lp.yValueAxis.valueMin) * lp.height
     from reportlab.graphics.shapes import Circle
-    ultimo_x = -99.0
+    pts = []
     for n in sorted(R.NOTAS, key=lambda k: fb[k]["fator"]):
         xv = 100 * fb[n]["fator"]
         yv = B.pdf((fb[n]["fator"] - a) / (b - a), c["alpha"], c["beta"]) / (b - a) / 100
-        d.add(Circle(sx(xv), sy(yv), 2.2, fillColor=colors.white, strokeColor=colors.black, strokeWidth=0.8))
-        dy = 7 if sx(xv) - ultimo_x > 12 else 17
-        d.add(String(sx(xv) - 3, sy(yv) + dy, n, fontName="Serif-B", fontSize=8))
-        ultimo_x = sx(xv)
+        pts.append([n, sx(xv), sy(yv)])
+    # rótulos numa linha acima da curva, afastados ao menos `gap` pontos, com linha de chamada até o ponto
+    gap, xs_l = 13.0, [q[1] for q in pts]
+    for _ in range(200):
+        mudou = False
+        for k in range(1, len(xs_l)):
+            if xs_l[k] - xs_l[k - 1] < gap:
+                m_ = (xs_l[k] + xs_l[k - 1]) / 2
+                xs_l[k - 1], xs_l[k] = m_ - gap / 2, m_ + gap / 2
+                mudou = True
+        if not mudou:
+            break
+    from reportlab.graphics.shapes import Line
+    y_rot = lp.y + lp.height + 6
+    for (n, px, py), lx in zip(pts, xs_l):
+        d.add(Line(px, py + 2.5, lx, y_rot - 2, strokeColor=colors.Color(0.55, 0.55, 0.55), strokeWidth=0.4,
+                   strokeDashArray=[1.5, 1.5]))
+        d.add(Circle(px, py, 2.2, fillColor=colors.white, strokeColor=colors.black, strokeWidth=0.8))
+        d.add(String(lx, y_rot, n, fontName="Serif-B", fontSize=8, textAnchor="middle"))
     d.add(String(1.4 * cm, 0.2 * cm, "Fator de capital (% da exposição)", fontName="Serif-I", fontSize=8))
     return d
 
 
 # ----------------------------------------------------------------------------- documento
 def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dict, cen, atual: float,
-              teto: float) -> bytes:
+              teto: float, info_gini: dict | None = None) -> bytes:
     _fontes()
     est = _estilos()
     det, resumo, bruto = out["detalhe"], out["resumo"], out["bruto"]
-    p0 = R.Parametros()
+    p0 = replace(p, abordagem="padronizada")   # régua e calibração não dependem dos λ
     pc = replace(p0, abordagem="calibrada")
+    gini = bool(p0.P_rc)
+    info_gini = info_gini or {}
+    k_rc, k_rm = R.k_risco(p0, "RC"), R.k_risco(p0, "RM")
+    lo_rm, hi_rm = R.intervalo_k(p0, risco="RM")
+    _cont = {"t": 0, "s3": 0}
+
+    def nt():
+        _cont["t"] += 1
+        return _cont["t"]
+
+    def s3():
+        _cont["s3"] += 1
+        return f"3.{_cont['s3']}"
     P, S, pi = p0.P, p0.S, R.PROPORCAO_BASILEIA
     sev = R.severidade_base(p0, "RC")
     fb = R.fator_base(p0, "RC")
     cal = {r: R.fpr_calibrado(pc, r) for r in R.RISCOS}
     rg = R.regua(p0)
-    lo, hi = R.intervalo_k(p0)
+    lo, hi = R.intervalo_k(p0, risco="RC")
     ciclo = R.lambda_ciclo(p0)
     salv = R.salvaguarda_ordenacao(p)
     cd = R.cauda(p0, "RC")
@@ -219,7 +247,9 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         "ponderação de risco de modelo (FPR), definido pela cor da nota de validação em uma régua de sete faixas, "
         "que multiplica a exposição da carteira atendida pelo modelo; o capital é 8% do RWA resultante. Os valores "
         "da régua derivam de uma calibração em que a probabilidade e a magnitude de uma falha de modelo são tiradas "
-        "das réguas de backtesting do Comitê de Basileia (1996) e da fórmula IRB, combinadas em dois canais de erro "
+        + ("da volatilidade do Gini observada no monitoramento dos modelos de crédito, das réguas de backtesting do "
+           "Comitê de Basileia (1996) em mercado e da fórmula IRB, combinadas" if gini else
+           "das réguas de backtesting do Comitê de Basileia (1996) e da fórmula IRB, combinadas") + " em dois canais de erro "
         "(quantitativo e qualitativo) e posicionadas em uma cauda de perda Beta-PERT. Para a base de entrada, o RWA "
         f"de risco de modelo é de <b>R$ {num(bruto['rwa'])} milhões</b>, com FPR médio de {pct(bruto['fpr_medio'])}, e o "
         f"capital econômico requerido é de <b>R$ {num(bruto['addon'])} milhões</b>, equivalente a "
@@ -240,16 +270,14 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     s.append(Paragraph(
         "O impacto de um erro de modelo cresce com o tamanho da carteira que o modelo atende. Por isso, a "
         "metodologia adota o formato da abordagem padronizada (BCBS, 2004; Resolução BCB nº 229/2022): poucas "
-        "categorias de risco, cada uma com um fator de ponderação em valor redondo, escolhido de forma conservadora "
-        "a partir de uma calibração mais fina. Este memorial apresenta o escopo e a base de entrada (Seção 2), o "
+        "categorias de risco, cada uma com um fator de ponderação escolhido de forma conservadora. Este memorial apresenta o escopo e a base de entrada (Seção 2), o "
         "racional da modelagem (Seção 3), a execução do cálculo (Seção 4), a premissa prudencial do escopo e a relação "
         "com a declaração de apetite a riscos (Seção 5), governança e limitações (Seção 6) e referências.", est["p"]))
 
     # ------------------------------------------------------------------ 2. escopo e base
     s.append(Paragraph("2. Escopo e base de entrada", est["h1"]))
     s.append(Paragraph(
-        "O escopo do capital é a fatia material do inventário de modelos. Em risco de crédito, um modelo de "
-        "behavior de probabilidade de inadimplência (PD) por carteira, com exposição igual ao saldo contábil da "
+        "Em risco de crédito, o escopo considera um modelo de behavior (PD) por carteira, com exposição igual ao saldo contábil da "
         "carteira. Em risco de mercado, os modelos de marcação a mercado de instrumentos classificados nos níveis 2 "
         "e 3 da hierarquia de valor justo (CPC 46), incluindo a contabilidade de hedge (Resolução CMN nº "
         "4.966/2021), com exposição igual ao valor justo contábil absoluto das posições. Instrumentos de nível 1 "
@@ -259,7 +287,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         linhas.append([r["ID"], r["Risco"], r["Carteira ou família"], r["Tier"], r["Nível"], r["Nota informada"],
                        _data(r["Última validação"]), num(r["Exposição (R$ mi)"])])
     s.append(_bloco_tabela(
-        "Tabela 1. Base de entrada: modelos no escopo do capital (exposição em R$ milhões).",
+        f"Tabela {nt()}. Base de entrada: modelos no escopo do capital (exposição em R$ milhões).",
         _tabela(["ID", "Risco", "Carteira ou família", "Tier", "Nível", "Nota", "Última validação", "Exposição"],
                 linhas, [1.3 * cm, 1.6 * cm, 3.6 * cm, 1.0 * cm, 1.1 * cm, 1.1 * cm, 2.4 * cm, 2.4 * cm], est,
                 alinha_dir=[7]),
@@ -268,7 +296,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
 
     # ------------------------------------------------------------------ 3. metodologia
     s.append(Paragraph("3. Metodologia", est["h1"]))
-    s.append(Paragraph("3.1 Formato do cálculo", est["h2"]))
+    s.append(Paragraph(f"{s3()} Formato do cálculo", est["h2"]))
     s.append(Paragraph(
         "Cada modelo <i>i</i> recebe um FPR de risco de modelo igual ao valor da faixa de sua nota de validação, "
         "ajustado por fatores de tier e de nível de valor justo. O RWA de risco de modelo é a soma do FPR vezes a "
@@ -281,7 +309,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         "λ<sub>nível</sub> = 1. O FPR mede apenas o risco de modelo: não há fator regulatório de crédito multiplicando "
         "a exposição, pois o risco de crédito da carteira já é capitalizado no Pilar 1.", est["p0"]))
 
-    s.append(Paragraph("3.2 Nota de validação e matriz de cores", est["h2"]))
+    s.append(Paragraph(f"{s3()} Nota de validação e matriz de cores", est["h2"]))
     s.append(Paragraph(
         "A validação independente classifica cada modelo em Robusto, Satisfatório ou Insatisfatório em dois eixos: "
         "quantitativo (discriminação, calibração, estabilidade, backtesting) e qualitativo (governança, dados, "
@@ -292,23 +320,74 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     mat = [["Robusto", "C (amarelo)", "B (verde)", "A (verde)"],
            ["Satisfatório", "F (vermelho)", "E (amarelo)", "D (verde)"],
            ["Insatisfatório", "I (vermelho)", "H (vermelho)", "G (laranja)"]]
-    s.append(_bloco_tabela("Tabela 2. Matriz de notas: linhas, eixo quantitativo; colunas, eixo qualitativo.",
+    s.append(_bloco_tabela(f"Tabela {nt()}. Matriz de notas: linhas, eixo quantitativo; colunas, eixo qualitativo.",
                            _tabela(["Quanti \\ Quali", "Insatisfatório", "Satisfatório", "Robusto"], mat,
                                    [3.2 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm], est), est))
 
-    s.append(Paragraph("3.3 Probabilidade de falha material (Basileia, 1996, Tabela 1)", est["h2"]))
+    s.append(Paragraph(f"{s3()} Probabilidade de falha material" + (" em mercado" if gini else "")
+                       + " (Basileia, 1996, Tabela 1)", est["h2"]))
     s.append(Paragraph(
         "A probabilidade P de falha material em um ano é a chance de um modelo sair da zona verde do semáforo de "
         "backtesting (cinco ou mais estouros em 250 dias) quando a cobertura real do VaR de 99% é de 99%, 98% ou "
         "97% (BCBS, 1996; Kupiec, 1995). Associa-se Robusto, Satisfatório e Insatisfatório a essas coberturas, e a "
-        "mesma escala vale para os dois eixos da nota.", est["p0"]))
+        "mesma escala vale para os dois eixos da nota"
+        + (" de mercado. Em crédito, onde o semáforo de 1996 não descreve o teste do modelo, P vem da volatilidade "
+           "do Gini (Seção 3.4)." if gini else "."), est["p0"]))
     s.append(Paragraph("P(nível) = Pr[X ≥ 5],   X ~ Binomial(250; 1 − cobertura)", est["eq"]))
-    s.append(_bloco_tabela("Tabela 3. Calibração de P.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Calibração de P.", _tabela(
         ["Nível", "Cobertura", "P calculado", "BCBS (1996), Tabela 1"],
         [[l, c, pct(P[l]), ref] for l, c, ref in zip(R.NIVEIS, ("99%", "98%", "97%"), ("10,8%", "56,1%", "87,2%"))],
         [3.2 * cm, 2.4 * cm, 2.6 * cm, 3.8 * cm], est, alinha_dir=[2]), est))
 
-    s.append(Paragraph("3.4 Magnitude da falha (Basileia, 1996, Tabela 2, e fórmula IRB)", est["h2"]))
+    if gini:
+        ref = info_gini.get("ref", R.GINI_PADRAO)
+        sig = info_gini.get("sigma")
+        s.append(Paragraph(f"{s3()} Probabilidade de falha em crédito pela volatilidade do Gini", est["h2"]))
+        s.append(Paragraph(
+            "Em um modelo de behavior de PD, o teste quantitativo central é o de discriminação, medido pelo Gini "
+            "(Engelmann, Hayden e Tasche, 2003). Define-se a falha material de crédito como o Gini ficar abaixo do "
+            "mínimo exigido pela política de validação em um ano. Cada nível tem um Gini de referência, e a "
+            "volatilidade anual σ do Gini vem da série do monitoramento: para cada modelo, o desvio-padrão das "
+            "variações entre observações consecutivas multiplicado pela raiz do número de observações por ano; "
+            "para a carteira de modelos, a raiz da média dos quadrados das σ individuais. A probabilidade de falha "
+            "é a chance de uma variação de um ano levar o Gini de referência abaixo do mínimo:", est["p0"]))
+        s.append(Paragraph("P<sub>RC</sub>(nível) = Φ(−z),   z = (G<sub>nível</sub> − G<sub>mín</sub>) / σ", est["eq"]))
+        s.append(Paragraph(
+            f"Com Gini mínimo de {pct(ref['minimo'])} e σ de {num(100 * sig)} pontos percentuais ao ano"
+            + (" (informada manualmente)" if info_gini.get("manual") else
+               f" (agregada de {info_gini.get('n_sigma', 0)} modelos de crédito)")
+            + ", a escala de crédito é a da tabela seguinte. A mesma escala vale para os dois eixos da nota de "
+            "crédito, como escala comum dentro do risco; a escala de Basileia permanece como referência de "
+            "comparação.", est["p0"]))
+        s.append(_bloco_tabela(f"Tabela {nt()}. Probabilidade de falha em crédito pela volatilidade do Gini.", _tabela(
+            ["Nível", "Gini de referência", "z", "P crédito (Gini)", "P Basileia (1996)"],
+            [[l, pct(ref[l]), num((ref[l] - ref["minimo"]) / sig), pct(p0.P_rc[l]), pct(P[l])] for l in R.NIVEIS],
+            [3.2 * cm, 3.0 * cm, 1.8 * cm, 3.0 * cm, 3.0 * cm], est, alinha_dir=[1, 2, 3, 4]), est))
+        dg = C.diagnostico_gini(inv, ref, data_base)
+        if len(dg):
+            linhas = [[r["ID"], r["Carteira ou família"], r["Nota efetiva"],
+                       pct(r["Gini atual"]) if r["Gini atual"] == r["Gini atual"] and r["Gini atual"] is not None else "-",
+                       num(100 * r["σ do Gini"]) if r["σ do Gini"] == r["σ do Gini"] and r["σ do Gini"] is not None
+                       else "-",
+                       num(r["Distância à reprovação (z)"]) if r["Distância à reprovação (z)"] is not None and
+                       r["Distância à reprovação (z)"] == r["Distância à reprovação (z)"] else "-",
+                       pct(r["P individual"]) if r["P individual"] is not None and r["P individual"] == r["P individual"]
+                       else "-", r["Nível pelo Gini"], r["Coerente"]] for _, r in dg.iterrows()]
+            s.append(_bloco_tabela(f"Tabela {nt()}. Distância à reprovação por modelo de crédito.", _tabela(
+                ["ID", "Carteira", "Nota", "Gini atual", "σ (p.p./ano)", "z", "P individual", "Nível pelo Gini",
+                 "Coerente"], linhas,
+                [1.3 * cm, 2.9 * cm, 1.1 * cm, 1.7 * cm, 1.8 * cm, 1.3 * cm, 1.9 * cm, 2.2 * cm, 1.5 * cm], est,
+                alinha_dir=[3, 4, 5, 6]), est,
+                "z = (Gini atual − Gini mínimo) / σ do modelo; P individual = Φ(−z). Nível pelo Gini com cortes nos "
+                "pontos médios entre as referências; Coerente compara com o nível quantitativo da nota efetiva. "
+                "Informativo: o capital usa o P por nível."))
+        s.append(Paragraph(
+            "A medida é assumida como premissa em três pontos: a variação anual do Gini é aproximadamente normal; a "
+            "volatilidade observada inclui o erro amostral de cada medição (Hanley e McNeil, 1982), o que a torna "
+            "conservadora; e janelas de desempenho sobrepostas no monitoramento podem reduzir a volatilidade "
+            "medida, o que recomenda séries com observações pouco sobrepostas.", est["p"]))
+
+    s.append(Paragraph(f"{s3()} Magnitude da falha (Basileia, 1996, Tabela 2, e fórmula IRB)", est["h2"]))
     s.append(Paragraph(
         "A magnitude S de cada nível é uma proporção π da severidade máxima do risco, com π igual aos acréscimos ao "
         "multiplicador da Tabela 2 de Basileia para 5, 7 e 10 ou mais estouros, divididos pelo acréscimo máximo "
@@ -322,12 +401,12 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     s.append(Paragraph(
         f"Com PD de 1%, LGD de 45% e prazo de 2,5 anos: K(1%) = {pct(k1)}, K(2%) = {pct(k2)} e "
         f"S<sub>RC,máx</sub> = {pct(S['RC']['Insatisfatório'])}.", est["p0"]))
-    s.append(_bloco_tabela("Tabela 4. Magnitude da falha por nível.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Magnitude da falha por nível.", _tabela(
         ["Nível", "π", "S mercado", "S crédito"],
         [[l, num(pi[l]), pct(S["RM"][l]), pct(S["RC"][l])] for l in R.NIVEIS],
         [3.2 * cm, 2.0 * cm, 2.8 * cm, 2.8 * cm], est, alinha_dir=[1, 2, 3]), est))
 
-    s.append(Paragraph("3.5 Dois canais de erro e harmonização com a matriz de cores", est["h2"]))
+    s.append(Paragraph(f"{s3()} Dois canais de erro e harmonização com a matriz de cores", est["h2"]))
     s.append(Paragraph(
         "A severidade-base de cada nota combina dois canais de erro. No canal quantitativo, o modelo erra porque "
         "seu desempenho é fraco; no canal qualitativo, o erro nasce de falhas de dados, implementação, uso ou "
@@ -340,12 +419,14 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     s.append(Paragraph(
         "O peso ω é escolhido para que a ordem das severidades reproduza a matriz de cores. A nota G (quanti "
         "insatisfatório, quali robusto) é laranja, pior que seu espelho C (amarelo), o que exige ω &lt; 1; e melhor "
-        f"que F (vermelho), o que exige ω &gt; {num(lo)}. Adota-se o centro do intervalo admissível, "
-        f"<b>ω = {num(p0.k_quali)}</b>: uma falha qualitativa pesa 80% de uma falha quantitativa de mesmo grau. O "
+        "que F (vermelho), o que dá o limite inferior. Adota-se o centro do intervalo admissível de cada risco: "
+        f"<b>ω = {num(k_rm)}</b> em mercado (intervalo de {num(lo_rm)} a {num(hi_rm)})"
+        + (f" e <b>ω = {num(k_rc)}</b> em crédito (intervalo de {num(lo)} a {num(hi)}, com a escala do Gini)"
+           if gini else ", valor que vale também para crédito") + ". O "
         "modelo sem validação recebe o pior caso nos dois canais, conceito alinhado à exigência de que a margem de "
         "conservadorismo seja quantificada pela própria incerteza (EBA, 2017).", est["p"]))
 
-    s.append(Paragraph("3.6 Cauda de perda Beta-PERT e FPR calibrado", est["h2"]))
+    s.append(Paragraph(f"{s3()} Cauda de perda Beta-PERT e FPR calibrado", est["h2"]))
     s.append(Paragraph(
         "A perda por risco de modelo é tratada como variável limitada e assimétrica à direita, com mínimo na nota A "
         "(risco residual de um modelo correto), moda na nota E (centro da matriz) e máximo no modelo sem validação. "
@@ -358,13 +439,13 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         "Figura 1. Cauda Beta-PERT de crédito (tier G) e posição de cada nota.", est["cap"])]))
     linhas = [[n, R.GRADE[n][0] if n != "n/a" else "-", R.GRADE[n][1] if n != "n/a" else "-", pct(sev[n]),
                num(fb[n]["u"]), pct(cal["RC"][n]), pct(cal["RM"][n])] for n in sorted(sev, key=sev.get)]
-    s.append(_bloco_tabela("Tabela 5. Severidade-base, posição na cauda e FPR calibrado por nota (tier G; mercado "
+    s.append(_bloco_tabela(f"Tabela {nt()}. Severidade-base, posição na cauda e FPR calibrado por nota (tier G; mercado "
                            "nível 3).", _tabela(
         ["Nota", "Quanti", "Quali", "Severidade crédito", "u", "FPR cal. crédito", "FPR cal. mercado"], linhas,
         [1.3 * cm, 2.3 * cm, 2.3 * cm, 2.5 * cm, 1.4 * cm, 2.5 * cm, 2.5 * cm], est, alinha_dir=[3, 4, 5, 6]), est,
         "Notas em ordem crescente de severidade. n/a: sem validação ou validação vencida."))
 
-    s.append(Paragraph("3.7 Régua padronizada", est["h2"]))
+    s.append(Paragraph(f"{s3()} Régua padronizada", est["h2"]))
     s.append(Paragraph(
         "As faixas da régua são as cores da matriz, com a nota A separada das demais verdes (melhor nota) e a nota I "
         "separada das vermelhas (pior nota validada). Em cada risco, o valor da faixa é o maior FPR calibrado de suas "
@@ -376,23 +457,24 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         nts = R.NOTAS_FAIXA[f]
         mc, mm = max(cal["RC"][n] for n in nts), max(cal["RM"][n] for n in nts)
         linhas.append([C.NOME_FAIXA[f], pct(mc), pct(rg["RC"][f]), pct(mm), pct(rg["RM"][f])])
-    s.append(_bloco_tabela("Tabela 6. Derivação da régua padronizada (tier G; mercado nível 3).", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Derivação da régua padronizada (tier G; mercado nível 3).", _tabela(
         ["Faixa", "Máx. calibrado crédito", "Régua crédito", "Máx. calibrado mercado", "Régua mercado"], linhas,
         [4.2 * cm, 2.8 * cm, 2.3 * cm, 2.8 * cm, 2.3 * cm], est, alinha_dir=[1, 2, 3, 4]), est))
     s.append(KeepTogether([_fig_regua(cal["RC"], rg), Paragraph(
         "Figura 2. FPR calibrado e régua padronizada de crédito por nota (tier G).", est["cap"])]))
 
-    s.append(Paragraph("3.8 Ajustes de tier e de nível de valor justo", est["h2"]))
+    s.append(Paragraph(f"{s3()} Ajustes de tier e de nível de valor justo", est["h2"]))
     s.append(Paragraph(
         f"Modelos de tier M e de nível 2 têm o FPR multiplicado por {num(lm)} e {num(ln2)}, respectivamente. O valor "
         "padrão de 0,65 é a proporção π(Satisfatório) da Tabela 2 de Basileia. No tier M, ele é confirmado pelo ciclo "
         "de validação: a relevância implícita no prazo (1 ano ÷ 3 anos) multiplicada pela razão do tempo em que um "
         "erro permanece sem detecção, com falhas à taxa η = −ln(1 − P) e detecção na validação seguinte. No nível 2, "
         "o fundamento é a hierarquia de valor justo: insumos observáveis implicam menor incerteza de modelo que no "
-        "nível 3 (CPC 46; Regulamento Delegado (UE) 2016/101).", est["p0"]))
+        "nível 3 (CPC 46; Regulamento Delegado (UE) 2016/101). A verificação pelo ciclo usa a escala de Basileia "
+        "nos dois riscos, por ser a referência comum do fator de tier.", est["p0"]))
     s.append(Paragraph("λ<sub>M</sub><sup>ciclo</sup> = (T<sub>G</sub>/T<sub>M</sub>) × f(T<sub>M</sub>) / "
                        "f(T<sub>G</sub>),   f(T) = 1 − (1 − e<sup>−ηT</sup>) / (ηT)", est["eq"]))
-    s.append(_bloco_tabela("Tabela 7. Fator de tier M pelo ciclo de validação.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Fator de tier M pelo ciclo de validação.", _tabela(
         ["Nível qualitativo", "Tempo com erro, tier G", "Tempo com erro, tier M", "λ M pelo ciclo"],
         [[l, pct(v["f_G"]), pct(v["f_M"]), num(v["lambda"])] for l, v in ciclo.items()],
         [3.4 * cm, 3.4 * cm, 3.4 * cm, 2.8 * cm], est, alinha_dir=[1, 2, 3]), est,
@@ -402,7 +484,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     tab_fpr = []
     for nome, (risco, lam) in C.combos(p).items():
         tab_fpr.append([nome] + [pct(lam * rg[risco][f]) for f in R.FAIXAS])
-    s.append(_bloco_tabela("Tabela 8. FPR de risco de modelo por faixa e situação de tier e nível.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. FPR de risco de modelo por faixa e situação de tier e nível.", _tabela(
         ["Situação", "A", "B, D", "C, E", "G", "F, H", "I", "n/a"], tab_fpr,
         [4.4 * cm] + [1.6 * cm] * 7, est, alinha_dir=list(range(1, 8))), est))
 
@@ -416,7 +498,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         est["p0"]))
     linhas = [[r["ID"], r["Tier"], r["Nota informada"], _data(r["Última validação"]), _data(r["Válida até"]),
                r["Situação"], r["Nota efetiva"], C.NOME_FAIXA[r["Faixa"]]] for _, r in det.iterrows()]
-    s.append(_bloco_tabela("Tabela 9. Situação da validação e faixa da régua por modelo.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Situação da validação e faixa da régua por modelo.", _tabela(
         ["ID", "Tier", "Nota", "Última validação", "Válida até", "Situação", "Nota efetiva", "Faixa"], linhas,
         [1.3 * cm, 1.0 * cm, 1.1 * cm, 2.3 * cm, 2.1 * cm, 2.3 * cm, 1.6 * cm, 3.6 * cm], est), est))
 
@@ -426,7 +508,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
                num(r["Capital (R$ mi)"])] for _, r in det.iterrows()]
     linhas.append(["Total", "", "", "", "", pct(bruto["fpr_medio"]), num(bruto["saldo"]), num(bruto["rwa"]),
                    num(bruto["addon"])])
-    s.append(_bloco_tabela("Tabela 10. Cálculo do capital por modelo (R$ milhões).", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Cálculo do capital por modelo (R$ milhões).", _tabela(
         ["ID", "Carteira ou família", "FPR faixa", "λ tier", "λ nível", "FPR", "Exposição", "RWA", "Capital"], linhas,
         [1.3 * cm, 3.3 * cm, 1.6 * cm, 1.2 * cm, 1.2 * cm, 1.6 * cm, 2.1 * cm, 2.0 * cm, 1.7 * cm], est,
         alinha_dir=[2, 3, 4, 5, 6, 7, 8], total=True), est,
@@ -460,7 +542,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     s.append(Paragraph("4.4 Consolidação", est["h2"]))
     linhas = [[r["Risco"], str(r["Modelos"]), num(r["Exposição (R$ mi)"]), pct(r["Cobertura de validação"]),
                num(r["RWA (R$ mi)"]), pct(r["FPR médio"]), num(r["Capital (R$ mi)"])] for _, r in resumo.iterrows()]
-    s.append(_bloco_tabela("Tabela 11. Capital econômico para risco de modelo consolidado (R$ milhões).", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Capital econômico para risco de modelo consolidado (R$ milhões).", _tabela(
         ["Risco", "Modelos", "Exposição", "Cobertura", "RWA", "FPR médio", "Capital"], linhas,
         [2.2 * cm, 1.6 * cm, 2.8 * cm, 2.2 * cm, 2.6 * cm, 2.0 * cm, 2.4 * cm], est,
         alinha_dir=[1, 2, 3, 4, 5, 6], total=True), est,
@@ -472,13 +554,13 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
 
     s.append(Paragraph("4.5 Cenários", est["h2"]))
     s.append(Paragraph(
-        "A Tabela 12 mostra o capital se todos os modelos, ou apenas os pendentes (sem validação ou com validação "
+        "A tabela a seguir mostra o capital se todos os modelos, ou apenas os pendentes (sem validação ou com validação "
         "vencida), fossem validados na data-base com cada nota, e o capital se nenhum modelo estivesse validado.",
         est["p0"]))
     linhas = [[r["Nota"], num(r["Todos validados com a nota"]), num(r["Só os pendentes validados com a nota"])]
               for _, r in cen.iterrows()]
     linhas += [["Nenhum validado", num(teto), num(teto)], ["Base de entrada", num(atual), num(atual)]]
-    s.append(_bloco_tabela("Tabela 12. Capital sob cenários de validação (R$ milhões).", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Capital sob cenários de validação (R$ milhões).", _tabela(
         ["Nota", "Todos validados com a nota", "Só os pendentes validados"], linhas,
         [3.4 * cm, 4.4 * cm, 4.4 * cm], est, alinha_dir=[1, 2]), est))
 
@@ -486,7 +568,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
     s.append(Paragraph("5. Premissa prudencial do escopo e apetite a riscos", est["h1"]))
     s.append(Paragraph(
         "O capital de risco de modelo e a declaração de apetite a riscos (RAS) medem populações diferentes. O capital "
-        "cobre a fatia material do inventário; a RAS mede a cobertura de validação do inventário total, com um mínimo "
+        "cobre os modelos do escopo definido na Seção 2; a RAS mede a cobertura de validação do inventário total, com um mínimo "
         "definido pela instituição, e a tolerância abaixo de 100% recai sobre os modelos de menor materialidade, que "
         "não entram no capital. Como premissa prudencial, todos os modelos do escopo do capital devem estar com "
         "validação ativa e em dia. A metodologia é geral: se um modelo do escopo estiver sem validação ou vencido, "
@@ -502,14 +584,15 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
               ["Cobertura de validação do inventário total", pct(rs["cobertura"])],
               ["Mínimo da RAS", pct(rs["cobertura_min"])],
               ["Situação na RAS", "Dentro do apetite" if rs["ras_ok"] else "Fora do apetite"]]
-    s.append(_bloco_tabela("Tabela 13. Premissa do escopo e cobertura da RAS.", _tabela(
+    s.append(_bloco_tabela(f"Tabela {nt()}. Premissa do escopo e cobertura da RAS.", _tabela(
         ["Indicador", "Valor"], linhas, [8.0 * cm, 5.0 * cm], est, alinha_dir=[1]), est))
 
     # ------------------------------------------------------------------ 6. limitações
     s.append(Paragraph("6. Governança e limitações", est["h1"]))
     s.append(Paragraph(
         "A régua padronizada é a regra de cálculo e só deve mudar por decisão de comitê. Na revisão anual, "
-        "recalcula-se a calibração (P, S, ω, pior caso de crédito, moda da cauda e fatores λ) e verifica-se se alguma "
+        "recalcula-se a calibração (P, incluindo a volatilidade do Gini e as referências de Gini em crédito, S, ω, "
+        "pior caso de crédito, moda da cauda e fatores λ) e verifica-se se alguma "
         "nota passou a ter FPR calibrado acima do valor de sua faixa, se a matriz de cores mudou e se a salvaguarda "
         "de ordenação continua atendida. As principais limitações, incorporadas como premissas, são:", est["p"]))
     for t in ("o capital só varia quando o modelo muda de faixa; mudanças de nota dentro da mesma faixa não são "
@@ -546,6 +629,7 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         "CONSELHO MONETÁRIO NACIONAL. Resolução CMN nº 4.966, de 25 de novembro de 2021. Dispõe sobre conceitos e "
         "critérios contábeis aplicáveis a instrumentos financeiros e à contabilidade de hedge.",
         "DERMAN, E. <i>Model risk</i>. Goldman Sachs Quantitative Strategies Research Notes. New York, 1996.",
+        "ENGELMANN, B.; HAYDEN, E.; TASCHE, D. Testing rating accuracy. <i>Risk</i>, v. 16, n. 1, p. 82-86, 2003.",
         "EUROPEAN BANKING AUTHORITY. <i>Guidelines on PD estimation, LGD estimation and the treatment of defaulted "
         "exposures</i> (EBA/GL/2017/16). London, 2017.",
         "EUROPEAN COMMISSION. Commission Delegated Regulation (EU) 2016/101 supplementing Regulation (EU) No 575/2013 "
@@ -555,6 +639,8 @@ def gerar_pdf(p: R.Parametros, inv: list, data_base: dt.date, out: dict, rs: dic
         "risk management</i>. Washington, 2011.",
         "GORDY, M. B. A risk-factor model foundation for ratings-based bank capital rules. <i>Journal of Financial "
         "Intermediation</i>, v. 12, n. 3, p. 199-232, 2003.",
+        "HANLEY, J. A.; McNEIL, B. J. The meaning and use of the area under a receiver operating characteristic (ROC) "
+        "curve. <i>Radiology</i>, v. 143, n. 1, p. 29-36, 1982.",
         "JPMORGAN CHASE &amp; CO. <i>Report of JPMorgan Chase &amp; Co. Management Task Force regarding 2012 CIO "
         "losses</i>. New York, 2013.",
         "KUPIEC, P. H. Techniques for verifying the accuracy of risk measurement models. <i>The Journal of "

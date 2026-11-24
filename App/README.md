@@ -24,6 +24,9 @@ streamlit run app.py
 - **Premissa e RAS**: verifica a premissa prudencial de que todos os modelos do escopo do capital estejam com
   validação ativa e em dia, e a cobertura de validação do inventário total contra o mínimo da RAS (parametrizável
   na barra lateral, junto com a quantidade de modelos fora do escopo do capital).
+- **Gini e P de crédito**: probabilidade de falha de crédito pela volatilidade do Gini do monitoramento,
+  P(nível) = Φ(−(Gini do nível − Gini mínimo)/σ); upload da série (ID, Data, Gini) para calcular Gini atual e σ
+  por modelo e preencher o inventário; distância à reprovação por modelo; comparação com Basileia 1996.
 - **Régua e matrizes de FPR**: régua de sete faixas e as matrizes nine box de FPR para crédito (tier G e M) e
   mercado (tier G e M, nível 3 e 2).
 - **Cenários**: capital se todos os modelos, ou só os pendentes, fossem validados com cada nota.
@@ -38,6 +41,7 @@ streamlit run app.py
 - `calculo.py`: ligação entre o inventário editável e o motor; relatório e exportação.
 - `rmcap.py`: motor da metodologia (calibração, régua, capital).
 - `memorial.py`: geração do memorial de cálculo em PDF (reportlab).
+- `dados/serie_gini_exemplo.csv`: série trimestral de Gini do inventário de exemplo.
 - `fonts/`: fontes Liberation Serif usadas no PDF (licença SIL OFL 1.1).
 - `.streamlit/config.toml`: tema visual.
 

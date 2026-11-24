@@ -11,6 +11,11 @@ import pandas as pd
 from scipy.stats import beta
 
 import rmcap as R
+from scipy.stats import norm
+
+_DIR = __import__("os").path.dirname(__import__("os").path.abspath(__file__))
+SERIE_EXEMPLO = __import__("os").path.join(_DIR, "dados", "serie_gini_exemplo.csv")
+COL_GINI, COL_SIGMA = "Gini atual (%)", "σ do Gini (p.p./ano)"
 
 NOTAS9 = list("ABCDEFGHI")
 SEM_VAL = "Sem validação"
@@ -44,6 +49,77 @@ def pct(x: float, casas: int = 3) -> str:
 
 
 # ----------------------------------------------------------------------------- inventário
+def ler_serie(arq) -> pd.DataFrame:
+    """Lê a série de Gini (CSV ou Excel) com colunas ID, Data e Gini (%)."""
+    nome = getattr(arq, "name", str(arq)).lower()
+    df = pd.read_excel(arq) if nome.endswith((".xlsx", ".xls")) else pd.read_csv(arq, sep=None, engine="python",
+                                                                                 decimal=",")
+    cols = {c.lower().strip(): c for c in df.columns}
+    ren = {}
+    for alvo, chaves in (("ID", ("id", "modelo")), ("Data", ("data", "date", "data-base")),
+                         ("Gini (%)", ("gini (%)", "gini", "gini %"))):
+        for k in chaves:
+            if k in cols:
+                ren[cols[k]] = alvo
+                break
+    df = df.rename(columns=ren)
+    if not {"ID", "Data", "Gini (%)"} <= set(df.columns):
+        raise ValueError("A série precisa das colunas ID, Data e Gini (%).")
+    df = df[["ID", "Data", "Gini (%)"]].copy()
+    df["ID"] = df["ID"].astype(str).str.strip()
+    iso = df["Data"].astype(str).str.match(r"^\d{4}-").all()
+    df["Data"] = pd.to_datetime(df["Data"], dayfirst=not iso, errors="coerce")
+    df["Gini (%)"] = pd.to_numeric(df["Gini (%)"].astype(str).str.replace(",", "."), errors="coerce")
+    df = df.dropna()
+    if df["Gini (%)"].max() <= 1.0:      # série informada em fração
+        df["Gini (%)"] *= 100
+    return df.sort_values(["ID", "Data"])
+
+
+def gini_da_serie(df: pd.DataFrame) -> pd.DataFrame:
+    """Por modelo: Gini atual (última observação) e volatilidade anual = desvio-padrão das variações entre
+    observações consecutivas × √(observações por ano)."""
+    linhas = []
+    for id_, g in df.groupby("ID", sort=False):
+        g = g.sort_values("Data")
+        n = len(g)
+        if n < 3:
+            linhas.append({"ID": id_, "Observações": n, "Início": g["Data"].iloc[0].date(),
+                           "Fim": g["Data"].iloc[-1].date(), "Observações por ano": None,
+                           COL_GINI: float(g["Gini (%)"].iloc[-1]), COL_SIGMA: None})
+            continue
+        passo = float(np.median(np.diff(g["Data"].values).astype("timedelta64[D]").astype(float)))
+        freq = max(1, round(365.25 / passo)) if passo > 0 else 1
+        sd = float(np.std(np.diff(g["Gini (%)"].values), ddof=1))
+        linhas.append({"ID": id_, "Observações": n, "Início": g["Data"].iloc[0].date(), "Fim": g["Data"].iloc[-1].date(),
+                       "Observações por ano": freq, COL_GINI: float(g["Gini (%)"].iloc[-1]),
+                       COL_SIGMA: sd * math.sqrt(freq)})
+    return pd.DataFrame(linhas)
+
+
+def aplicar_serie(inv_df: pd.DataFrame, est: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Preenche Gini atual e σ do inventário a partir das estimativas da série (somente modelos de crédito)."""
+    out = inv_df.copy()
+    for c in (COL_GINI, COL_SIGMA):
+        if c not in out.columns:
+            out[c] = None
+        out[c] = out[c].astype("float64")
+    feitos, ignorados = [], []
+    for _, r in est.iterrows():
+        msk = (out["ID"].astype(str).str.strip() == r["ID"]) & (out["Risco"] == "Crédito")
+        if not msk.any():
+            ignorados.append(r["ID"])
+            continue
+        out.loc[msk, COL_GINI] = r[COL_GINI]
+        if pd.notna(r[COL_SIGMA]):
+            out.loc[msk, COL_SIGMA] = r[COL_SIGMA]
+        feitos.append(r["ID"])
+    msgs = [f"Atualizados: {', '.join(feitos)}." if feitos else "Nenhum modelo de crédito do inventário na série."]
+    if ignorados:
+        msgs.append(f"IDs da série fora do inventário de crédito: {', '.join(ignorados)}.")
+    return out, msgs
+
+
 def inventario_exemplo() -> pd.DataFrame:
     linhas = []
     for m in R.INVENTARIO:
@@ -52,7 +128,14 @@ def inventario_exemplo() -> pd.DataFrame:
                        "Nota": m.nota if m.nota else SEM_VAL,
                        "Última validação": m.data_validacao,
                        "Exposição (R$ mi)": float(m.saldo)})
-    return pd.DataFrame(linhas)
+    df = pd.DataFrame(linhas)
+    df[COL_GINI] = np.nan
+    df[COL_SIGMA] = np.nan
+    try:
+        df, _ = aplicar_serie(df, gini_da_serie(ler_serie(SERIE_EXEMPLO)))
+    except FileNotFoundError:
+        pass
+    return df
 
 
 def para_modelos(df: pd.DataFrame) -> tuple[list[R.Modelo], list[str]]:
@@ -85,14 +168,64 @@ def para_modelos(df: pd.DataFrame) -> tuple[list[R.Modelo], list[str]]:
             if nivel not in ("N2", "N3"):
                 avisos.append(f"{id_}: nível de valor justo não informado; considerado N3 (sem redução).")
                 nivel = "N3"
+        gini = sigma = None
+        if risco == "RC":
+            try:
+                gini = float(row.get(COL_GINI)) / 100
+                gini = gini if np.isfinite(gini) else None
+            except (TypeError, ValueError):
+                gini = None
+            try:
+                sigma = float(row.get(COL_SIGMA)) / 100
+                sigma = sigma if np.isfinite(sigma) and sigma > 0 else None
+            except (TypeError, ValueError):
+                sigma = None
         out.append(R.Modelo(id_, risco, str(row.get("Carteira ou família") or ""), str(row.get("Modelo") or ""),
-                            tier, nota, data, exp, nivel))
+                            tier, nota, data, exp, nivel, gini=gini, sigma_gini=sigma))
     return out, avisos
 
 
 # ----------------------------------------------------------------------------- parâmetros e régua
 def parametros(lam_m: float, lam_n2: float) -> R.Parametros:
     return R.Parametros(lam_tier={"G": 1.0, "M": lam_m}, lam_nivel={"N3": 1.0, "N2": lam_n2})
+
+
+def calibrar_gini(p: R.Parametros, inv: list[R.Modelo], usar: bool, ref: dict,
+                  sigma_manual: float | None = None) -> tuple[R.Parametros, dict]:
+    """Aplica o P de crédito pela volatilidade do Gini. σ: manual, se informada; senão, agregada do inventário."""
+    sig_inv = R.sigma_agregada(inv)
+    sigma = sigma_manual if (sigma_manual and sigma_manual > 0) else sig_inv
+    info = {"usar": usar, "sigma": sigma, "sigma_inventario": sig_inv, "manual": bool(sigma_manual),
+            "ref": ref, "n_sigma": sum(1 for m in inv if m.risco == "RC" and m.sigma_gini)}
+    if not usar or not sigma:
+        info["usar"] = False
+        return R.com_gini(p, None), info
+    q = R.com_gini(p, sigma, ref)
+    info["intervalo"] = R.intervalo_k(q, risco="RC")
+    info["ordem_ok"] = R.ordem_cores_ok(q, "RC")
+    return q, info
+
+
+def diagnostico_gini(inv: list[R.Modelo], ref: dict, data_base: dt.date) -> pd.DataFrame:
+    """Por modelo de crédito: distância à reprovação z = (Gini − mínimo) / σ, P = Φ(−z) e nível implícito pelo
+    Gini (cortes nos pontos médios entre as referências), comparado ao nível quantitativo da nota."""
+    c_rs = (ref["Robusto"] + ref["Satisfatório"]) / 2
+    c_si = (ref["Satisfatório"] + ref["Insatisfatório"]) / 2
+    linhas = []
+    for m in inv:
+        if m.risco != "RC":
+            continue
+        z = (m.gini - ref["minimo"]) / m.sigma_gini if (m.gini is not None and m.sigma_gini) else None
+        niv_g = None if m.gini is None else ("Robusto" if m.gini >= c_rs else
+                                             "Satisfatório" if m.gini >= c_si else "Insatisfatório")
+        st = m.status(data_base)
+        niv_n = R.GRADE[st][0] if st != "n/a" else None
+        linhas.append({"ID": m.id, "Carteira ou família": m.carteira, "Nota efetiva": st,
+                       "Gini atual": m.gini, "σ do Gini": m.sigma_gini, "Distância à reprovação (z)": z,
+                       "P individual": float(norm.cdf(-z)) if z is not None else None,
+                       "Nível pelo Gini": niv_g or "-", "Nível quanti da nota": niv_n or "-",
+                       "Coerente": ("-" if (niv_g is None or niv_n is None) else ("Sim" if niv_g == niv_n else "Não"))})
+    return pd.DataFrame(linhas)
 
 
 def regua_df(p: R.Parametros) -> pd.DataFrame:
@@ -172,15 +305,18 @@ def cenarios(p: R.Parametros, inv: list[R.Modelo], data_base: dt.date) -> pd.Dat
 # ----------------------------------------------------------------------------- racional (relatório)
 def racional(p: R.Parametros) -> list[dict]:
     """Seções do relatório com o racional dos FPRs; números calculados pelo motor com os parâmetros vigentes."""
-    p0 = R.Parametros()
+    p0 = replace(p, abordagem="padronizada")   # régua e calibração não dependem dos λ
     pc = replace(p0, abordagem="calibrada")
     P, S = p0.P, p0.S
+    gini = bool(p0.P_rc)
+    k_rc, k_rm = R.k_risco(p0, "RC"), R.k_risco(p0, "RM")
+    lo_rm, hi_rm = R.intervalo_k(p0, risco="RM")
     kk = {"K(1%)": R.k_irb(0.01), "K(2%)": R.k_irb(0.02)}
     sev = R.severidade_base(p0, "RC")
     fb = {r: R.fator_base(p0, r) for r in R.RISCOS}
     cal = {r: R.fpr_calibrado(pc, r) for r in R.RISCOS}
     rg = R.regua(p0)
-    lo, hi = R.intervalo_k(p0)
+    lo, hi = R.intervalo_k(p0, risco="RC")
     ciclo = R.lambda_ciclo(p0)
     salv = R.salvaguarda_ordenacao(p)
     cd = {r: R.cauda(p0, r) for r in R.RISCOS}
@@ -205,7 +341,20 @@ def racional(p: R.Parametros) -> list[dict]:
                 "formula_txt": "P = Pr[X ≥ 5], X ~ Binomial(250; 1 − cobertura)",
                 "tabela": pd.DataFrame({"Nível": NIVEIS, "Cobertura": ["99%", "98%", "97%"],
                                         "P calculado": [pct(P[l]) for l in NIVEIS],
-                                        "BCBS 1996, Tabela 1": ["10,8%", "56,1%", "87,2%"]})})
+                                        "BCBS 1996, Tabela 1": ["10,8%", "56,1%", "87,2%"]}),
+                "nota": ("Em crédito, P vem da volatilidade do Gini (seção 2a); a escala de Basileia vale para mercado."
+                         if gini else None)})
+    if gini:
+        sec.append({"titulo": "2a. Probabilidade de falha em crédito pela volatilidade do Gini",
+                    "texto": "Em crédito, a falha material de um modelo de behavior é o Gini ficar abaixo do mínimo "
+                             "exigido em um ano. Cada nível tem um Gini de referência, e a volatilidade anual σ do Gini "
+                             "vem da série do monitoramento dos modelos de crédito (raiz da média dos quadrados das σ "
+                             "de cada modelo). A mesma escala vale para os dois eixos da nota de crédito.",
+                    "formula": r"P_{RC}(\text{nível})=\Phi\!\left(-\frac{G_{\text{nível}}-G_{\text{mín}}}{\sigma}\right)",
+                    "formula_txt": "P_RC(nível) = Φ(−(Gini do nível − Gini mínimo) / σ)",
+                    "tabela": pd.DataFrame({"Nível": NIVEIS,
+                                            "P crédito (Gini)": [pct(p0.P_rc[l]) for l in NIVEIS],
+                                            "P Basileia 1996": [pct(P[l]) for l in NIVEIS]})})
     sec.append({"titulo": "3. Magnitude da falha S (Basileia 1996, Tabela 2, e fórmula IRB)",
                 "texto": "A magnitude é uma proporção π da severidade máxima de cada risco, com π igual aos acréscimos "
                          "ao multiplicador da Tabela 2 de Basileia (0,40; 0,65; 1,00) divididos pelo máximo. Em mercado, "
@@ -223,8 +372,11 @@ def racional(p: R.Parametros) -> list[dict]:
                 "texto": "A severidade de cada nota é a média ponderada de dois canais: o quantitativo (P e S do nível "
                          "quanti) e o qualitativo (P e S do nível quali, com peso ω). O peso é escolhido para que a ordem "
                          "das notas reproduza a matriz de cores de referência: o laranja (G) acima do amarelo (C) exige "
-                         f"ω < 1; o laranja abaixo do vermelho (F) exige ω > {num(lo)}. Adota-se o centro do intervalo, "
-                         f"**ω = {num(p0.k_quali)}**: uma falha qualitativa pesa 80% de uma quantitativa de mesmo grau. "
+                         "ω < 1, e o laranja abaixo do vermelho (F) dá o limite inferior. Adota-se o centro do "
+                         "intervalo admissível em cada risco: "
+                         f"**ω = {num(k_rm)}** em mercado (intervalo {num(lo_rm)} a {num(hi_rm)})"
+                         + (f" e **ω = {num(k_rc)}** em crédito (intervalo {num(lo)} a {num(hi)}, com o P do Gini)"
+                            if gini else " e em crédito") + ". "
                          "O modelo sem validação recebe o pior caso nos dois canais.",
                 "formula": r"s_r(\text{nota})=8\%\cdot\frac{P_{quanti}S_{r,quanti}+\omega P_{quali}S_{r,quali}}{1+\omega},"
                            r"\qquad s_r(\text{n/a})=8\%\cdot S_{r,máx}",
@@ -239,7 +391,8 @@ def racional(p: R.Parametros) -> list[dict]:
                          "mínimo na nota A (risco residual de um modelo correto), moda na nota E (centro da matriz) e "
                          "máximo no modelo sem validação. Cada nota recebe o quantil da cauda correspondente à sua "
                          "posição u, e o FPR calibrado é esse quantil dividido por 8%. Parâmetros da cauda: "
-                         f"α = {num(cd['RC']['alpha'])}, β = {num(cd['RC']['beta'])} (iguais nos dois riscos).",
+                         f"crédito α = {num(cd['RC']['alpha'])}, β = {num(cd['RC']['beta'])}; "
+                         f"mercado α = {num(cd['RM']['alpha'])}, β = {num(cd['RM']['beta'])}.",
                 "formula": r"u=\frac{s(\text{nota})-s(A)}{s(\text{n/a})-s(A)},\quad "
                            r"\text{FPR}^{cal}=\frac{a+(b-a)\,B^{-1}(u;\alpha,\beta)}{8\%}",
                 "formula_txt": "u = [s(nota) − s(A)] / [s(n/a) − s(A)];  FPR_cal = [a + (b − a)·Beta⁻¹(u; α, β)] / 8%",
@@ -283,7 +436,7 @@ def racional(p: R.Parametros) -> list[dict]:
                     f"({'atendida' if v['ok'] else 'NÃO atendida'})" for r, v in salv.items()) + "."})
     sec.append({"titulo": "8. Escopo do capital, premissa prudencial e RAS de cobertura",
                 "texto": "O capital de risco de modelo e a declaração de apetite a riscos (RAS) medem populações "
-                         "diferentes. O **capital** cobre a fatia material do inventário: os modelos de behavior de PD "
+                         "diferentes. O **capital** cobre os modelos de behavior (PD) "
                          "de cada carteira de crédito e os modelos de marcação a mercado de nível 2 e 3, incluindo hedge "
                          "contábil. A **RAS** mede a cobertura de validação do inventário total, com um percentual "
                          "mínimo definido pela instituição; a tolerância abaixo de 100% recai, na prática, sobre os "
@@ -303,7 +456,7 @@ def racional(p: R.Parametros) -> list[dict]:
                          "Framework for the Use of Backtesting; BCBS (2004), Basileia II; BCBS (2005), An Explanatory "
                          "Note on the Basel II IRB Risk Weight Functions; BCBS MAR32; EBA/GL/2017/16; Regulamento (UE) "
                          "2016/101; JPMorgan Chase (2013), Report of the Management Task Force (London Whale); Malcolm "
-                         "et al. (1959); Vose (2008), Risk Analysis."})
+                         "et al. (1959); Vose (2008), Risk Analysis; Hanley e McNeil (1982); Tasche (2003)."})
     return sec
 
 

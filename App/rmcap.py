@@ -120,6 +120,8 @@ class Parametros:
     lam_tier: dict = field(default_factory=lambda: {"G": 1.0, "M": PROPORCAO_BASILEIA["Satisfatório"]})
     lam_nivel: dict = field(default_factory=lambda: {"N3": 1.0, "N2": PROPORCAO_BASILEIA["Satisfatório"]})
     cal: Calibracao = field(default_factory=Calibracao)
+    P_rc: dict | None = None         # P de crédito pela volatilidade do Gini (None = escala de Basileia 1996)
+    k_quali_rc: float | None = None  # peso ω próprio de crédito, recalibrado quando P_rc é usado
 
     def __post_init__(self):
         c = self.cal
@@ -145,6 +147,8 @@ class Modelo:
     saldo: float        # saldo contábil (crédito) ou valor justo contábil absoluto (mercado), R$ milhões
     nivel: str | None = None   # N2 ou N3 (mercado)
     observacao: str = ""
+    gini: float | None = None        # Gini atual do monitoramento (crédito, fração)
+    sigma_gini: float | None = None  # volatilidade anual do Gini (crédito, fração)
 
     def status(self, data_base: dt.date) -> str:
         """Nota vigente ou n/a (sem validação ou validação vencida pelo prazo do tier)."""
@@ -189,11 +193,20 @@ INVENTARIO = [
 
 
 # ----------------------------------------------------------------------------- núcleo
+def P_risco(p: Parametros, risco: str) -> dict:
+    """Escala de probabilidade de falha do risco: Gini em crédito (quando calibrada), Basileia 1996 nos demais."""
+    return p.P_rc if (risco == "RC" and p.P_rc) else p.P
+
+
+def k_risco(p: Parametros, risco: str) -> float:
+    return p.k_quali_rc if (risco == "RC" and p.k_quali_rc is not None) else p.k_quali
+
+
 def severidade_base(p: Parametros, risco: str) -> dict:
     """Dois canais de erro: quantitativo (P e S do nível quanti) e qualitativo (P e S do nível quali, peso k).
     s = F × [P(quanti)·S(quanti) + k·P(quali)·S(quali)] / (1 + k);  sem validação: P = 1 e S máximo nos dois canais."""
-    S, k = p.S[risco], p.k_quali
-    s = {n: p.F * (p.P[GRADE[n][0]] * S[GRADE[n][0]] + k * p.P[GRADE[n][1]] * S[GRADE[n][1]]) / (1 + k)
+    S, k, P = p.S[risco], k_risco(p, risco), P_risco(p, risco)
+    s = {n: p.F * (P[GRADE[n][0]] * S[GRADE[n][0]] + k * P[GRADE[n][1]] * S[GRADE[n][1]]) / (1 + k)
          for n in NOTAS[:-1]}
     s["n/a"] = p.F * S["Insatisfatório"]
     return s
@@ -256,16 +269,48 @@ def regua(p: Parametros) -> dict:
     return out
 
 
-def ordem_cores_ok(p: Parametros) -> bool:
+def ordem_cores_ok(p: Parametros, risco: str = "RC") -> bool:
     """A severidade-base respeita a matriz de cores: verde < amarelo < laranja < vermelho < I < sem validação."""
-    s = severidade_base(p, "RC")
+    s = severidade_base(p, risco)
     return all(max(s[n] for n in NOTAS_FAIXA[f]) < min(s[n] for n in NOTAS_FAIXA[f + 1]) for f in FAIXAS[:-1])
 
 
-def intervalo_k(p: Parametros, passo: float = 0.0005) -> tuple[float, float]:
-    """Intervalo de pesos do canal qualitativo compatível com a matriz de cores."""
-    ks = [i * passo for i in range(1, int(2 / passo)) if ordem_cores_ok(replace(p, k_quali=i * passo))]
+def intervalo_k(p: Parametros, passo: float = 0.0005, risco: str = "RC") -> tuple[float, float]:
+    """Intervalo de pesos do canal qualitativo compatível com a matriz de cores, no risco indicado."""
+    campo = "k_quali_rc" if (risco == "RC" and p.P_rc) else "k_quali"
+    ks = [i * passo for i in range(1, int(2 / passo))
+          if ordem_cores_ok(replace(p, **{campo: i * passo}), risco)]
     return (min(ks), max(ks)) if ks else (float("nan"), float("nan"))
+
+
+# ----------------------------------------------------------------------------- P de crédito pelo Gini
+GINI_PADRAO = {"minimo": 0.40, "Robusto": 0.55, "Satisfatório": 0.45, "Insatisfatório": 0.35}
+
+
+def sigma_agregada(inv: list) -> float | None:
+    """Volatilidade agregada do Gini dos modelos de crédito: raiz da média dos quadrados das σ informadas."""
+    v = [m.sigma_gini for m in inv if m.risco == "RC" and m.sigma_gini and m.sigma_gini > 0]
+    return math.sqrt(sum(x * x for x in v) / len(v)) if v else None
+
+
+def p_gini(sigma: float, ref: dict = GINI_PADRAO) -> dict:
+    """P(nível) = Φ(−z), z = (Gini de referência do nível − Gini mínimo) / σ: chance de o Gini ficar abaixo do
+    mínimo em um ano."""
+    return {l: float(norm.cdf(-(ref[l] - ref["minimo"]) / sigma)) for l in NIVEIS}
+
+
+def com_gini(p: Parametros, sigma: float | None, ref: dict = GINI_PADRAO) -> Parametros:
+    """Parâmetros com P de crédito pela volatilidade do Gini e ω de crédito no centro do intervalo admissível
+    (arredondado a 0,01 quando continua dentro do intervalo). Sem σ, mantém a escala de Basileia."""
+    if not sigma or sigma <= 0:
+        return replace(p, P_rc=None, k_quali_rc=None)
+    q = replace(p, P_rc=p_gini(sigma, ref), k_quali_rc=p.k_quali)
+    lo, hi = intervalo_k(q, risco="RC")
+    if math.isnan(lo):
+        return q
+    c = (lo + hi) / 2
+    k = round(c, 2) if lo <= round(c, 2) <= hi else c
+    return replace(q, k_quali_rc=k)
 
 
 def fpr_base(p: Parametros, risco: str, nota: str) -> float:
