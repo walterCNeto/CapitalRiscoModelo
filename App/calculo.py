@@ -281,13 +281,49 @@ def racional(p: R.Parametros) -> list[dict]:
                 "nota": "Salvaguarda com os λ atuais: " + "; ".join(
                     f"{NOME_RISCO[r]}: M sem validação {pct(v['M_sem_validacao'])} vs G nota I {pct(v['G_faixa3'])} "
                     f"({'atendida' if v['ok'] else 'NÃO atendida'})" for r, v in salv.items()) + "."})
-    sec.append({"titulo": "8. Referências",
+    sec.append({"titulo": "8. Escopo do capital, premissa prudencial e RAS de cobertura",
+                "texto": "O capital de risco de modelo e a declaração de apetite a riscos (RAS) medem populações "
+                         "diferentes. O **capital** cobre a fatia material do inventário: os modelos de behavior de PD "
+                         "de cada carteira de crédito e os modelos de marcação a mercado de nível 2 e 3, incluindo hedge "
+                         "contábil. A **RAS** mede a cobertura de validação do inventário total, com um percentual "
+                         "mínimo definido pela instituição; a tolerância abaixo de 100% recai, na prática, sobre os "
+                         "modelos de menor materialidade, que não entram no capital.\n\n"
+                         "Como **premissa prudencial**, todos os modelos do escopo do capital devem estar com validação "
+                         "ativa e em dia. A metodologia, ainda assim, é geral: se um modelo do escopo estiver sem "
+                         "validação ou com validação vencida, ele recebe o FPR de pior caso da régua. Essa faixa funciona "
+                         "como penalidade por descumprimento da premissa, e não como custo de uma tolerância aceita. Os "
+                         "modelos fora do escopo não recebem capital próprio, por baixa materialidade; ficam cobertos "
+                         "pela RAS e pelo plano de validação (premissa assumida).",
+                "formula": r"\text{Cobertura}_{RAS}=\frac{\text{validados em dia no escopo}+\text{validados em dia fora do escopo}}"
+                           r"{\text{modelos no escopo}+\text{modelos fora do escopo}}\ \ge\ \text{mínimo da RAS}",
+                "formula_txt": "Cobertura RAS = (validados em dia no escopo + validados em dia fora do escopo) / "
+                               "(modelos no escopo + modelos fora do escopo) ≥ mínimo da RAS"})
+    sec.append({"titulo": "9. Referências",
                 "texto": "Res. CMN 4.557/2017; Res. BCB 229/2022; Res. CMN 4.966/2021; CPC 46; BCBS (1996), Supervisory "
                          "Framework for the Use of Backtesting; BCBS (2004), Basileia II; BCBS (2005), An Explanatory "
                          "Note on the Basel II IRB Risk Weight Functions; BCBS MAR32; EBA/GL/2017/16; Regulamento (UE) "
                          "2016/101; JPMorgan Chase (2013), Report of the Management Task Force (London Whale); Malcolm "
                          "et al. (1959); Vose (2008), Risk Analysis."})
     return sec
+
+
+def ras(det: pd.DataFrame, tot_fora: int, val_fora: int, cob_min: float) -> dict:
+    """Premissa prudencial do escopo do capital e cobertura de validação do inventário total para a RAS."""
+    n_esc = len(det)
+    vig = det[det["Situação"] == "Vigente"] if n_esc else det
+    fora = det[det["Situação"] != "Vigente"] if n_esc else det
+    val_esc = len(vig)
+    tot = n_esc + tot_fora
+    val = val_esc + val_fora
+    cob = val / tot if tot else 0.0
+    cap_tot = float(det["Capital (R$ mi)"].sum()) if n_esc else 0.0
+    cap_fora = float(fora["Capital (R$ mi)"].sum()) if n_esc else 0.0
+    return {"escopo_total": n_esc, "escopo_validos": val_esc, "premissa_ok": val_esc == n_esc,
+            "descumprimento": fora, "capital_descumprimento": cap_fora,
+            "parcela_capital_descumprimento": cap_fora / cap_tot if cap_tot else 0.0,
+            "fora_total": tot_fora, "fora_validos": val_fora, "fora_cobertura": val_fora / tot_fora if tot_fora else 1.0,
+            "inv_total": tot, "inv_validos": val, "cobertura": cob, "cobertura_min": cob_min, "ras_ok": cob >= cob_min,
+            "folga_modelos": val - math.ceil(cob_min * tot - 1e-9)}
 
 
 def curva_pert(p: R.Parametros) -> dict:
@@ -300,7 +336,7 @@ def curva_pert(p: R.Parametros) -> dict:
     return out
 
 
-def relatorio_html(p: R.Parametros, resumo: pd.DataFrame, data_base: dt.date) -> str:
+def relatorio_html(p: R.Parametros, resumo: pd.DataFrame, data_base: dt.date, rs: dict | None = None) -> str:
     import markdown
     corpo = []
     for s in racional(p):
@@ -332,6 +368,7 @@ table.tab{{border-collapse:collapse;margin:10px 0;font-size:13px}} .tab th,.tab 
 <p>Data-base do cálculo: {data_base.strftime('%d/%m/%Y')}.</p>
 <h2>Régua padronizada vigente (tier G; mercado nível 3)</h2>{tab_rg.to_html(index=False, border=0, classes='tab')}
 <h2>Resultado do inventário</h2>{res.to_html(index=False, border=0, classes='tab')}
+{ras_html(rs) if rs else ''}
 {''.join(corpo)}</body></html>"""
 
 
@@ -346,3 +383,17 @@ def excel(det: pd.DataFrame, resumo: pd.DataFrame, rg: pd.DataFrame, inv_df: pd.
             for col in ws.columns:
                 ws.column_dimensions[col[0].column_letter].width = max(12, min(40, len(str(col[0].value)) + 4))
     return buf.getvalue()
+
+
+def ras_html(rs: dict) -> str:
+    linhas = [("Modelos no escopo do capital", f"{rs['escopo_total']}"),
+              ("Com validação vigente no escopo", f"{rs['escopo_validos']}"),
+              ("Premissa prudencial (100% do escopo em dia)", "Atendida" if rs["premissa_ok"] else "Não atendida"),
+              ("Capital de modelos do escopo fora da premissa (R$ mi)", num(rs["capital_descumprimento"])),
+              ("Modelos fora do escopo do capital", f"{rs['fora_total']}"),
+              ("Validados em dia fora do escopo", f"{rs['fora_validos']}"),
+              ("Cobertura de validação do inventário total", pct(rs["cobertura"])),
+              ("Mínimo da RAS", pct(rs["cobertura_min"])),
+              ("Situação na RAS", "Dentro do apetite" if rs["ras_ok"] else "Fora do apetite")]
+    df = pd.DataFrame(linhas, columns=["Indicador", "Valor"])
+    return "<h2>Premissa do escopo e RAS de cobertura</h2>" + df.to_html(index=False, border=0, classes="tab")

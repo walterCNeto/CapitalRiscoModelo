@@ -33,6 +33,16 @@ with st.sidebar:
                              help="Fator de modelos de nível 2 de valor justo (nível 3 = 1).")
     st.caption("Validade da validação: 12 meses (tier G) e 36 meses (tier M). Validação vencida ou ausente "
                "recebe o FPR de sem validação. Capital = 8% × RWA.")
+    st.markdown("### Apetite a risco (RAS)")
+    cob_min = st.number_input("Cobertura mínima de validação do inventário (%)", 0.0, 100.0, 80.0, 1.0,
+                              format="%.3f", help="Percentual mínimo de modelos validados e em dia no inventário "
+                                                  "total, definido na RAS.") / 100
+    tot_fora = st.number_input("Modelos fora do escopo do capital", 0, 10000, 60, 1,
+                               help="Demais modelos do inventário, que não entram no cálculo do capital.")
+    val_fora = st.number_input("Desses, validados e em dia", 0, 10000, 50, 1)
+    if val_fora > tot_fora:
+        st.warning("Validados fora do escopo maior que o total; ajustado ao total.")
+        val_fora = tot_fora
     if st.button("Restaurar inventário de exemplo"):
         st.session_state.pop("inv", None)
         st.session_state["editor_ver"] = st.session_state.get("editor_ver", 0) + 1
@@ -51,8 +61,8 @@ st.title("Capital de risco de modelo")
 st.caption("Pilar 2 · FPR de risco de modelo da régua padronizada × exposição = RWA; capital = 8% × RWA. "
            "Valores em R$ milhões. Inventário e saldos ilustrativos.")
 
-aba_inv, aba_res, aba_mat, aba_cen, aba_rac = st.tabs(
-    ["Inventário", "Resultado", "Régua e matrizes de FPR", "Cenários", "Racional dos FPRs"])
+aba_inv, aba_res, aba_ras, aba_mat, aba_cen, aba_rac = st.tabs(
+    ["Inventário", "Resultado", "Premissa e RAS", "Régua e matrizes de FPR", "Cenários", "Racional dos FPRs"])
 
 # ----------------------------------------------------------------------------- inventário
 with aba_inv:
@@ -82,13 +92,29 @@ with aba_inv:
         st.warning(a)
 
 # ----------------------------------------------------------------------------- indicadores
+def datas(df: pd.DataFrame) -> pd.DataFrame:
+    """Datas como texto dd/mm/aaaa e traço quando ausentes, para exibição."""
+    out = df.copy()
+    for c in ("Última validação", "Válida até"):
+        if c in out:
+            out[c] = [x.strftime("%d/%m/%Y") if x is not None and pd.notna(x) else "-" for x in out[c]]
+    return out
+
+
 def caixa(col, rotulo, valor):
     col.markdown(f"<div class='metric-box'><div class='l'>{rotulo}</div><div class='v'>{valor}</div></div>",
                  unsafe_allow_html=True)
 
 
+rs = C.ras(det, int(tot_fora), int(val_fora), cob_min)
+
 # ----------------------------------------------------------------------------- resultado
 with aba_res:
+    if not rs["premissa_ok"]:
+        st.warning(f"Premissa prudencial não atendida: {rs['escopo_total'] - rs['escopo_validos']} de "
+                   f"{rs['escopo_total']} modelos do escopo estão sem validação ou com validação vencida, e recebem o "
+                   f"FPR de pior caso ({C.pct(rs['parcela_capital_descumprimento'])} do capital). Detalhes na aba "
+                   "Premissa e RAS.")
     k = st.columns(5)
     caixa(k[0], "Capital de risco de modelo (R$ mi)", C.num(bruto["addon"]))
     caixa(k[1], "RWA de risco de modelo (R$ mi)", C.num(bruto["rwa"]))
@@ -111,8 +137,8 @@ with aba_res:
                 for c in row.index]
 
     dfmt = lambda d: d.strftime("%d/%m/%Y") if d else "-"
-    st.dataframe(det.style.apply(pinta, axis=1).format(
-        {"Última validação": dfmt, "Válida até": dfmt, "FPR da faixa": C.pct, "λ tier": C.num, "λ nível": C.num,
+    st.dataframe(datas(det).style.apply(pinta, axis=1).format(
+        {"FPR da faixa": C.pct, "λ tier": C.num, "λ nível": C.num,
          "FPR de risco de modelo": C.pct, "Exposição (R$ mi)": C.num, "RWA (R$ mi)": C.num,
          "Capital (R$ mi)": C.num}, na_rep="-"), hide_index=True, width="stretch", height=min(38 * (len(det) + 1), 720))
     st.caption("FPR de risco de modelo = FPR da faixa × λ tier × λ nível. RWA = FPR × exposição. Capital = 8% × RWA.")
@@ -131,6 +157,54 @@ with aba_res:
     st.download_button("Baixar cálculo em Excel", C.excel(det, resumo, C.regua_df(p), edit),
                        "capital_risco_modelo_calculo.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ----------------------------------------------------------------------------- premissa e RAS
+with aba_ras:
+    st.markdown("O **capital** cobre a fatia material do inventário (escopo desta ferramenta). A **RAS** mede a "
+                "cobertura de validação do inventário total, incluindo os modelos que não entram no capital. Como "
+                "premissa prudencial, todos os modelos do escopo do capital devem estar com validação ativa e em dia; "
+                "se não estiverem, recebem o FPR de pior caso da régua.")
+    st.subheader("Premissa prudencial do escopo do capital")
+    k = st.columns(3)
+    caixa(k[0], "Modelos no escopo com validação em dia", f"{rs['escopo_validos']} de {rs['escopo_total']}")
+    caixa(k[1], "Situação da premissa", "Atendida" if rs["premissa_ok"] else "Não atendida")
+    caixa(k[2], "Capital de modelos fora da premissa (R$ mi)",
+          f"{C.num(rs['capital_descumprimento'])} ({C.pct(rs['parcela_capital_descumprimento'])})")
+    st.write("")
+    if rs["premissa_ok"]:
+        st.success("Todos os modelos do escopo do capital estão com validação ativa e em dia.")
+    else:
+        d = rs["descumprimento"][["ID", "Risco", "Carteira ou família", "Tier", "Nota informada", "Última validação",
+                                  "Válida até", "Situação", "Exposição (R$ mi)", "Capital (R$ mi)"]]
+        dfmt2 = lambda x: x.strftime("%d/%m/%Y") if x else "-"
+        st.dataframe(datas(d).style.format({"Exposição (R$ mi)": C.num,
+                                     "Capital (R$ mi)": C.num}, na_rep="-"), hide_index=True, width="stretch")
+        st.caption("Esses modelos recebem o FPR de pior caso enquanto a validação não for concluída ou renovada.")
+
+    st.subheader("RAS: cobertura de validação do inventário total")
+    k = st.columns(4)
+    caixa(k[0], "Modelos no inventário total", f"{rs['inv_total']}")
+    caixa(k[1], "Validados e em dia", f"{rs['inv_validos']}")
+    caixa(k[2], "Cobertura do inventário", C.pct(rs["cobertura"]))
+    caixa(k[3], "Mínimo da RAS", C.pct(rs["cobertura_min"]))
+    st.write("")
+    tab = pd.DataFrame([
+        {"Grupo": "Escopo do capital", "Modelos": rs["escopo_total"], "Validados e em dia": rs["escopo_validos"],
+         "Cobertura": rs["escopo_validos"] / rs["escopo_total"] if rs["escopo_total"] else 1.0},
+        {"Grupo": "Fora do escopo do capital", "Modelos": rs["fora_total"], "Validados e em dia": rs["fora_validos"],
+         "Cobertura": rs["fora_cobertura"]},
+        {"Grupo": "Inventário total", "Modelos": rs["inv_total"], "Validados e em dia": rs["inv_validos"],
+         "Cobertura": rs["cobertura"]}])
+    st.dataframe(tab.style.format({"Cobertura": C.pct}), hide_index=True, width="content")
+    if rs["ras_ok"]:
+        st.success(f"Dentro do apetite: cobertura de {C.pct(rs['cobertura'])}, acima do mínimo de "
+                   f"{C.pct(rs['cobertura_min'])}. Folga de {rs['folga_modelos']} modelo(s) validado(s).")
+    else:
+        st.error(f"Fora do apetite: cobertura de {C.pct(rs['cobertura'])}, abaixo do mínimo de "
+                 f"{C.pct(rs['cobertura_min'])}. Faltam {-rs['folga_modelos']} modelo(s) validado(s).")
+    st.caption("Os modelos fora do escopo não recebem capital próprio, por baixa materialidade (premissa assumida); "
+               "são acompanhados pela RAS e pelo plano de validação. A cobertura do escopo vem do inventário editável; "
+               "a dos demais modelos, dos parâmetros da barra lateral.")
 
 # ----------------------------------------------------------------------------- régua e matrizes
 def matriz_html(titulo: str, fpr: dict) -> str:
@@ -201,7 +275,7 @@ with aba_cen:
 # ----------------------------------------------------------------------------- racional
 with aba_rac:
     st.markdown("Relatório com o racional de cálculo dos FPRs. Os números são recalculados pelo motor da metodologia.")
-    st.download_button("Baixar relatório (HTML)", C.relatorio_html(p, resumo, data_base),
+    st.download_button("Baixar relatório (HTML)", C.relatorio_html(p, resumo, data_base, rs),
                        "racional_fpr_risco_modelo.html", "text/html")
     p0 = R.Parametros()
     for s in C.racional(p):

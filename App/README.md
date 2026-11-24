@@ -5,7 +5,11 @@ FPR da faixa da nota × λ tier × λ nível × exposição = RWA; capital = 8% 
 
 ## Como rodar
 
+Use um ambiente separado, para não alterar as versões de numpy e pandas de outros projetos:
+
 ```
+conda create -n capitalrm python=3.12 -y
+conda activate capitalrm
 pip install -r requirements.txt
 streamlit run app.py
 ```
@@ -17,6 +21,9 @@ streamlit run app.py
   é tratada como sem validação.
 - **Resultado**: capital, RWA, FPR médio, cobertura de validação, resumo por risco, cálculo modelo a modelo e
   download em Excel.
+- **Premissa e RAS**: verifica a premissa prudencial de que todos os modelos do escopo do capital estejam com
+  validação ativa e em dia, e a cobertura de validação do inventário total contra o mínimo da RAS (parametrizável
+  na barra lateral, junto com a quantidade de modelos fora do escopo do capital).
 - **Régua e matrizes de FPR**: régua de sete faixas e as matrizes nine box de FPR para crédito (tier G e M) e
   mercado (tier G e M, nível 3 e 2).
 - **Cenários**: capital se todos os modelos, ou só os pendentes, fossem validados com cada nota.
@@ -30,6 +37,6 @@ streamlit run app.py
 - `rmcap.py`: motor da metodologia (calibração, régua, capital).
 - `.streamlit/config.toml`: tema visual.
 
-Parâmetros na barra lateral: data-base, λ tier M e λ nível 2. A régua vigente é a aprovada (derivada da calibração
+Parâmetros na barra lateral: data-base, λ tier M, λ nível 2, cobertura mínima da RAS e modelos fora do escopo do capital (total e validados em dia). A régua vigente é a aprovada (derivada da calibração
 padrão); a salvaguarda de ordenação é verificada e sinalizada quando os λ são alterados.
 Inventário e saldos ilustrativos.
