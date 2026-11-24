@@ -149,6 +149,7 @@ class Modelo:
     observacao: str = ""
     gini: float | None = None        # Gini atual do monitoramento (crédito, fração)
     sigma_gini: float | None = None  # volatilidade anual do Gini (crédito, fração)
+    ind: dict = field(default_factory=dict)  # indicadores internos de desvio (abordagem interna)
 
     def status(self, data_base: dt.date) -> str:
         """Nota vigente ou n/a (sem validação ou validação vencida pelo prazo do tier)."""

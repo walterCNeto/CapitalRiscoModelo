@@ -1,14 +1,21 @@
-# Capital de risco de modelo (app Streamlit)
+# Capital de risco de modelo (Pilar 2) · abordagem interna
 
-App que calcula o add-on de Pilar 2 para risco de modelo pela régua padronizada de FPR:
-FPR da faixa da nota × λ tier × λ nível × exposição = RWA; capital = 8% × RWA.
+App Streamlit que calcula o capital econômico para risco de modelo a partir do desvio medido de cada modelo em
+indicadores internos de performance:
+
+Capital_i = Exposição_i × D_i(α, h) × (1 + MC(nota_i))
+
+- **Crédito (behavior de PD):** razão taxa de default observada / PD prevista; m = exp(μ + z_α σ √h);
+  D = max{K(m·PD) − K(PD) (fórmula IRB da classe); (m − 1)·PD·LGD (provisão)}.
+- **Mercado N2:** desvio do IPV (marcação contra fonte independente), quantil bilateral de |d| com d ~ N(μ, σ² h).
+- **Mercado N3:** sensibilidade a premissas alternativas razoavelmente possíveis (CPC 46, 93(h)(ii)) ou diferença
+  para o modelo alternativo, levada ao quantil α: D = max(s, a) × z_α / z_c × √h.
+- **Margem de conservadorismo:** pela nota da validação (matriz A a I), 0 na nota A e 100% sem validação ou vencida.
+- **Tier:** define a validade (12 ou 36 meses) e o horizonte h do desvio (1 ou 3 anos).
 
 ## Como rodar
 
-Use um ambiente separado, para não alterar as versões de numpy e pandas de outros projetos:
-
 ```
-conda create -n capitalrm python=3.12 -y
 conda activate capitalrm
 pip install -r requirements.txt
 streamlit run app.py
@@ -16,35 +23,24 @@ streamlit run app.py
 
 ## Abas
 
-- **Inventário**: tabela editável (risco, tier, nível de valor justo, nota, data da última validação, exposição).
-  Linhas podem ser incluídas e excluídas. Nota sem data, ou data fora da validade (12 meses tier G, 36 meses tier M),
-  é tratada como sem validação.
-- **Resultado**: capital, RWA, FPR médio, cobertura de validação, resumo por risco, cálculo modelo a modelo e
-  download em Excel.
-- **Premissa e RAS**: verifica a premissa prudencial de que todos os modelos do escopo do capital estejam com
-  validação ativa e em dia, e a cobertura de validação do inventário total contra o mínimo da RAS (parametrizável
-  na barra lateral, junto com a quantidade de modelos fora do escopo do capital).
-- **Gini e P de crédito**: probabilidade de falha de crédito pela volatilidade do Gini do monitoramento,
-  P(nível) = Φ(−(Gini do nível − Gini mínimo)/σ); upload da série (ID, Data, Gini) para calcular Gini atual e σ
-  por modelo e preencher o inventário; distância à reprovação por modelo; comparação com Basileia 1996.
-- **Régua e matrizes de FPR**: régua de sete faixas e as matrizes nine box de FPR para crédito (tier G e M) e
-  mercado (tier G e M, nível 3 e 2).
-- **Cenários**: capital se todos os modelos, ou só os pendentes, fossem validados com cada nota.
-- **Racional dos FPRs**: relatório com a derivação dos FPRs (P, S, dois canais, ω, cauda Beta-PERT,
-  arredondamento, λ), com download em HTML.
-- **Memorial de cálculo**: paper em PDF gerado a partir da base de entrada atual (exemplo ou editada), com
-  racional da modelagem, execução do cálculo por modelo, cenários, premissa e RAS e referências teóricas.
+- **Inventário:** modelos, notas, tiers, datas, exposições e indicadores de desvio (editável).
+- **Resultado:** capital por família e por modelo, com a régua padronizada anterior como referência.
+- **Desvio por modelo:** cálculo do desvio por família; upload das séries de crédito (ID, Data, PD prevista (%),
+  Taxa de default (%)) e de IPV (ID, Data, Desvio IPV (%)) para preencher o inventário.
+- **Matriz e margem:** margem de conservadorismo por nota.
+- **Premissa e RAS:** premissa prudencial do escopo e cobertura de validação do inventário total.
+- **Cenários:** capital se todos, ou só os pendentes, fossem validados com cada nota.
+- **Memorial de cálculo:** paper em PDF com racional, execução e referências.
 
 ## Arquivos
 
 - `app.py`: interface.
-- `calculo.py`: ligação entre o inventário editável e o motor; relatório e exportação.
-- `rmcap.py`: motor da metodologia (calibração, régua, capital).
-- `memorial.py`: geração do memorial de cálculo em PDF (reportlab).
-- `dados/serie_gini_exemplo.csv`: série trimestral de Gini do inventário de exemplo.
-- `fonts/`: fontes Liberation Serif usadas no PDF (licença SIL OFL 1.1).
-- `.streamlit/config.toml`: tema visual.
+- `interno.py`: inventário, séries, cálculo e cenários da abordagem interna.
+- `rmint.py`: motor da abordagem interna (desvios, fórmula IRB por classe, margem).
+- `rmcap.py`, `calculo.py`: matriz de notas, validade, RAS e régua padronizada de referência.
+- `memorial.py`: memorial de cálculo em PDF (reportlab).
+- `formulas.py`: fórmulas do memorial em LaTeX (mathtext, fonte STIX) convertidas em vetor.
+- `dados/`: séries de exemplo de crédito e de IPV.
+- `fonts/`: Liberation Serif (licença SIL OFL 1.1).
 
-Parâmetros na barra lateral: data-base, λ tier M, λ nível 2, cobertura mínima da RAS e modelos fora do escopo do capital (total e validados em dia). A régua vigente é a aprovada (derivada da calibração
-padrão); a salvaguarda de ordenação é verificada e sinalizada quando os λ são alterados.
-Inventário e saldos ilustrativos.
+Inventário, séries e saldos ilustrativos.
