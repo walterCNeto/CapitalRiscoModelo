@@ -39,7 +39,7 @@ with st.sidebar:
                              help="Nível de confiança atribuído às premissas razoavelmente possíveis da divulgação do "
                                   "CPC 46 (padrão: 90%, como no ajuste de avaliação prudente).") / 100
     st.caption("Validade da validação: 12 meses (tier G) e 36 meses (tier M). O horizonte do desvio de crédito é o "
-               "ciclo do tier (1 ou 3 anos); em mercado, 1 ano. Validação vencida ou ausente recebe margem de 100%.")
+               "ciclo do tier (1 ou 3 anos); em mercado, 1 ano. Validação vencida ou ausente recebe nota de risco κ de 100%.")
     st.markdown("### Apetite a risco (RAS)")
     cob_min = st.number_input("Cobertura mínima de validação do inventário (%)", 0.0, 100.0, 80.0, 1.0,
                               format="%.3f") / 100
@@ -66,11 +66,11 @@ if "serie_cred" not in st.session_state:
     st.session_state["serie_cred_nome"] = "série de exemplo"
 
 st.title("Capital de risco de modelo")
-st.caption("Pilar 2 · abordagem interna: capital = exposição × desvio do modelo no quantil α × (1 + margem de "
+st.caption("Pilar 2 · abordagem interna: capital = exposição × desvio do modelo no quantil α × (1 + nota de risco κ "
            "conservadorismo da nota). Valores em R$ milhões. Inventário, séries e saldos ilustrativos.")
 
 aba_inv, aba_res, aba_des, aba_mat, aba_ras, aba_cen, aba_mem = st.tabs(
-    ["Inventário", "Resultado", "Desvio por modelo", "Matriz e margem", "Premissa e RAS", "Cenários",
+    ["Inventário", "Resultado", "Desvio por modelo", "Matriz e nota de risco κ", "Premissa e RAS", "Cenários",
      "Memorial de cálculo"])
 
 # ----------------------------------------------------------------------------- inventário
@@ -138,7 +138,7 @@ with aba_res:
     if not rs["premissa_ok"]:
         st.warning(f"Premissa prudencial não atendida: {rs['escopo_total'] - rs['escopo_validos']} de "
                    f"{rs['escopo_total']} modelos do escopo estão sem validação ou com validação vencida e recebem "
-                   f"margem de 100% ({C.pct(rs['parcela_capital_descumprimento'])} do capital).")
+                   f"nota de risco κ de 100% ({C.pct(rs['parcela_capital_descumprimento'])} do capital).")
     k = st.columns(4)
     caixa(k[0], "Capital interno de risco de modelo (R$ mi)", C.num(out["capital"]))
     caixa(k[1], "Taxa de capital sobre a exposição", C.pct(out["capital"] / out["exposicao"] if out["exposicao"] else 0))
@@ -151,8 +151,8 @@ with aba_res:
                  hide_index=True, width="stretch")
     st.subheader("Por modelo")
     cols = ["ID", "Família", "Carteira ou família", "Tier", "Nota efetiva", "Horizonte (anos)", "Fonte do desvio",
-            "Desvio D", "Margem MC", "Taxa de capital", "Exposição (R$ mi)", "Capital (R$ mi)"]
-    st.dataframe(fmt(det[cols], pcts=["Desvio D", "Margem MC", "Taxa de capital"],
+            "Desvio D", "Nota de risco κ", "Taxa de capital", "Exposição (R$ mi)", "Capital (R$ mi)"]
+    st.dataframe(fmt(det[cols], pcts=["Desvio D", "Nota de risco κ", "Taxa de capital"],
                      nums=["Exposição (R$ mi)", "Capital (R$ mi)", "Horizonte (anos)"]),
                  hide_index=True, width="stretch")
     if len(det):
@@ -305,7 +305,7 @@ with aba_des:
     for m_ in st.session_state.pop("msg", []):
         st.success(m_)
 
-# ----------------------------------------------------------------------------- matriz e margem
+# ----------------------------------------------------------------------------- matriz e nota de risco κ
 def matriz_html(titulo: str, val: dict) -> str:
     linhas = ""
     for lab, linha in zip(["Robusto", "Satisfatório", "Insatisfatório"], C.MATRIZ):
@@ -320,29 +320,30 @@ def matriz_html(titulo: str, val: dict) -> str:
 
 
 with aba_mat:
-    st.markdown("A nota da validação mede o quanto o desvio medido é confiável. A margem de conservadorismo MC "
-                "multiplica o desvio por (1 + MC): zero na nota A e 100% sem validação, seguindo a ordem da matriz "
+    st.markdown("A **nota de risco do modelo κ** é capturada pela validação independente e mede o quanto o desvio "
+                "medido é confiável. Ela multiplica o desvio por (1 + κ): zero na nota A e 100% sem validação, "
+                "seguindo a ordem da matriz "
                 "de cores.")
     st.latex(r"e(\text{nota})=\frac{P_{q}\,\pi_{q}+\omega\,P_{ql}\,\pi_{ql}}{1+\omega},\qquad "
-             r"MC(\text{nota})=\frac{e(\text{nota})-e(A)}{1-e(A)}")
+             r"\kappa(\text{nota})=\frac{e(\text{nota})-e(A)}{1-e(A)}")
     st.caption(f"P e π: probabilidade e proporção de magnitude por nível (Basileia, 1996, Tabelas 1 e 2); "
                f"ω = {C.num(p.omega)} (peso do eixo qualitativo). Ordem da matriz de cores: "
                f"{'atendida' if I.ordem_margem_ok(p) else 'não atendida'}.")
     c1, c2 = st.columns([1, 1])
     with c1:
-        st.markdown(matriz_html("Margem de conservadorismo por nota", out["margem"]), unsafe_allow_html=True)
+        st.markdown(matriz_html("Nota de risco do modelo κ", out["margem"]), unsafe_allow_html=True)
     with c2:
         e = I.perda_relativa(p)
         tab = pd.DataFrame([{"Nota": n, "Quanti": R.GRADE[n][0] if n != "n/a" else "-",
-                             "Quali": R.GRADE[n][1] if n != "n/a" else "-", "e(nota)": e[n], "MC": out["margem"][n],
+                             "Quali": R.GRADE[n][1] if n != "n/a" else "-", "e(nota)": e[n], "κ": out["margem"][n],
                              "Multiplicador": 1 + out["margem"][n]} for n in R.NOTAS])
-        st.dataframe(fmt(tab, pcts=["e(nota)", "MC"], nums=["Multiplicador"]), hide_index=True, width="stretch")
+        st.dataframe(fmt(tab, pcts=["e(nota)", "κ"], nums=["Multiplicador"]), hide_index=True, width="stretch")
 
 # ----------------------------------------------------------------------------- premissa e RAS
 with aba_ras:
     st.markdown("O **capital** cobre os modelos do escopo (behavior de PD em crédito; marcação a mercado de nível 2 "
                 "e 3). A **RAS** mede a cobertura de validação do inventário total. Como premissa prudencial, todos "
-                "os modelos do escopo devem estar com validação ativa e em dia; se não estiverem, recebem margem de "
+                "os modelos do escopo devem estar com validação ativa e em dia; se não estiverem, recebem nota de risco κ de "
                 "100% sobre o desvio medido.")
     st.subheader("Premissa prudencial do escopo do capital")
     k = st.columns(3)
@@ -374,7 +375,7 @@ with aba_ras:
 # ----------------------------------------------------------------------------- cenários
 with aba_cen:
     st.markdown("Capital se todos os modelos, ou só os pendentes (sem validação ou vencidos), fossem validados na "
-                "data-base com cada nota. O desvio medido não muda; muda a margem de conservadorismo.")
+                "data-base com cada nota. O desvio medido não muda; muda a nota de risco κ.")
     cen, atual, teto = N.cenarios(p, inv, data_base)
     k = st.columns(3)
     caixa(k[0], "Inventário atual (R$ mi)", C.num(atual))
@@ -403,7 +404,7 @@ with aba_cen:
 # ----------------------------------------------------------------------------- memorial
 with aba_mem:
     st.markdown("Memorial de cálculo em formato de paper (PDF), gerado a partir da base de entrada atual e dos "
-                "parâmetros da barra lateral: racional da modelagem por família, margem de conservadorismo, execução "
+                "parâmetros da barra lateral: racional da modelagem por família, nota de risco κ, execução "
                 "do cálculo por modelo, cenários, premissa e RAS, limitações e referências.")
     assinatura = (edit.to_csv(index=False), str(data_base), alfa, conf_s, int(tot_fora), int(val_fora), cob_min,
                   st.session_state.get("serie_cred_nome"), len(st.session_state["serie_cred"]),

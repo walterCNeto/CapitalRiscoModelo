@@ -242,7 +242,7 @@ def calcular(p: I.ParamInt, inv: list[R.Modelo], data_base: dt.date) -> dict:
                        "Fonte do desvio": o["fonte"], "PD média (crédito)": d.get("pd_media"),
                        "PD estressada média": d.get("pd_estressada_media"),
                        "Desvio capital IRB": d.get("D_K"), "Desvio provisão": d.get("D_PE"),
-                       "Critério": d.get("criterio", "-"), "Desvio D": o["D"], "Margem MC": o["mc"],
+                       "Critério": d.get("criterio", "-"), "Desvio D": o["D"], "Nota de risco κ": o["mc"],
                        "Taxa de capital": o["D"] * (1 + o["mc"]), "Exposição (R$ mi)": m.saldo,
                        "Capital (R$ mi)": o["capital"]})
     det = pd.DataFrame(linhas)

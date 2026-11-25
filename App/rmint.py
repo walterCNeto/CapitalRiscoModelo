@@ -1,10 +1,10 @@
 """Capital interno de risco de modelo: desvio medido por modelo em indicadores internos de performance.
 
-Capital_i = E_i × D_i(α, h) × (1 + MC(nota_i))
+Capital_i = E_i × D_i(α, h) × (1 + κ(nota_i))
 
 E   exposição (saldo contábil em crédito; valor justo absoluto em mercado)
 D   desvio do modelo no quantil α em % da exposição, no horizonte h do ciclo de validação do tier
-MC  margem de conservadorismo pela nota da validação (0 na nota A, 100% sem validação)
+κ   nota de risco do modelo, capturada pela validação independente (0 na nota A, 100% sem validação)
 
 Crédito (behavior de PD), por grupo homogêneo (GH) g: desvio absoluto d = BadRate − PD do GH;
     viés b_g só conta se a BadRate acumulada sair do intervalo de Jeffreys de 95% da PD do GH;
@@ -38,9 +38,9 @@ FAMILIAS = {"RC": "Crédito (behavior de PD)", "N2": "Mercado nível 2", "N3": "
 class ParamInt:
     alfa: float = 0.999            # confiança do desvio em um ano
     conf_sens: float = 0.90        # confiança implícita da sensibilidade divulgada do N3 (alinhada ao AVA)
-    omega: float = 0.80            # peso do canal qualitativo na margem de conservadorismo
+    omega: float = 0.80            # peso do eixo qualitativo na nota de risco κ
     maturidade: float = 2.5        # prazo efetivo da fórmula IRB corporativa
-    base: R.Parametros = field(default_factory=R.Parametros)   # P e π de Basileia para a margem
+    base: R.Parametros = field(default_factory=R.Parametros)   # P e π de Basileia para a nota de risco κ
 
     @property
     def z(self) -> float:
@@ -58,7 +58,7 @@ def horizonte(m: R.Modelo) -> float:
     return R.PRAZO_MESES[m.tier] / 12 if m.risco == "RC" else 1.0
 
 
-# ----------------------------------------------------------------------------- margem de conservadorismo
+# ----------------------------------------------------------------------------- nota de risco do modelo (κ)
 def perda_relativa(p: ParamInt) -> dict:
     """e(nota) = [P(quanti)·π(quanti) + ω·P(quali)·π(quali)] / (1 + ω), com P e π de Basileia (1996);
     sem validação: e = 1."""
@@ -69,7 +69,7 @@ def perda_relativa(p: ParamInt) -> dict:
 
 
 def margem(p: ParamInt) -> dict:
-    """MC(nota) = [e(nota) − e(A)] / [1 − e(A)]: 0 na nota A e 100% sem validação."""
+    """κ(nota) = [e(nota) − e(A)] / [1 − e(A)]: 0 na nota A e 100% sem validação."""
     e = perda_relativa(p)
     return {n: (e[n] - e["A"]) / (1 - e["A"]) for n in R.NOTAS}
 

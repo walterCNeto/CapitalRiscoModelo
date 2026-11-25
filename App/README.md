@@ -3,7 +3,7 @@
 App Streamlit que calcula o capital econômico para risco de modelo a partir do desvio medido de cada modelo em
 indicadores internos de performance:
 
-Capital_i = Exposição_i × D_i(α, h) × (1 + MC(nota_i))
+Capital_i = Exposição_i × D_i(α, h) × (1 + κ(nota_i))
 
 - **Crédito (behavior de PD), por GH:** d = BadRate do GH − PD do GH; viés só se a PD sair do intervalo de
   Jeffreys de 95%; volatilidade líquida do ruído binomial, só se o teste de sobredispersão (χ² a 95%) rejeitar o ruído;
@@ -13,7 +13,8 @@ Capital_i = Exposição_i × D_i(α, h) × (1 + MC(nota_i))
   D = Σ w_f D_f pelo valor justo; horizonte de 1 ano (IPV mensal).
 - **Mercado N3:** sensibilidade a premissas alternativas razoavelmente possíveis (CPC 46, 93(h)(ii)) ou diferença
   para o modelo alternativo, levada ao quantil α: D = max(s, a) × z_α / z_c; horizonte de 1 ano.
-- **Margem de conservadorismo:** pela nota da validação (matriz A a I), 0 na nota A e 100% sem validação ou vencida.
+- **Nota de risco do modelo κ:** capturada pela validação independente (matriz A a I), 0 na nota A e 100% sem
+  validação ou vencida; multiplica o desvio por (1 + κ).
 - **Tier:** define a validade (12 ou 36 meses) e, em crédito, o horizonte h do desvio (1 ou 3 anos).
 
 ## Como rodar
@@ -31,7 +32,7 @@ streamlit run app.py
 - **Desvio por modelo:** cálculo do desvio por família; upload da série de calibragem por GH (ID, Data, GH, PD do GH (%),
   Contratos, Bads, Saldo (R$ mi)) e de IPV por família (ID, Data, Família de instrumento,
   Desvio IPV (%), Tolerância (%), Valor justo (R$ mi)), que entram direto no cálculo.
-- **Matriz e margem:** margem de conservadorismo por nota.
+- **Matriz e nota de risco κ:** nota de risco do modelo κ por nota de validação.
 - **Premissa e RAS:** premissa prudencial do escopo e cobertura de validação do inventário total.
 - **Cenários:** capital se todos, ou só os pendentes, fossem validados com cada nota.
 - **Memorial de cálculo:** paper em PDF com racional, execução e referências.
@@ -40,7 +41,7 @@ streamlit run app.py
 
 - `app.py`: interface.
 - `interno.py`: inventário, séries, cálculo e cenários da abordagem interna.
-- `rmint.py`: motor da abordagem interna (desvios, fórmula IRB por classe, margem).
+- `rmint.py`: motor da abordagem interna (desvios, fórmula IRB por classe, nota de risco κ).
 - `rmcap.py`, `calculo.py`: matriz de notas, validade, RAS e régua padronizada de referência.
 - `memorial.py`: memorial de cálculo em PDF (reportlab).
 - `formulas.py`: fórmulas do memorial em LaTeX (mathtext, fonte STIX) convertidas em vetor.

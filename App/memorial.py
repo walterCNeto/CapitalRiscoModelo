@@ -323,8 +323,8 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "<b>Resumo.</b> Este memorial documenta o cálculo do capital econômico de Pilar 2 para risco de modelo pela "
         f"abordagem interna, sobre {len(det)} modelos e exposição de R$ {num(tot['Exposição (R$ mi)'])} milhões. Para "
         "cada modelo, o capital é a exposição multiplicada pelo desvio do modelo no quantil de "
-        f"{pct(p.alfa)} em um ano, medido em indicadores internos de performance, e por um fator de margem de "
-        "conservadorismo definido pela nota da validação independente. Em crédito, o desvio vem da comparação, por "
+        f"{pct(p.alfa)} em um ano, medido em indicadores internos de performance, e pela nota de risco do modelo κ, "
+        "capturada pela validação independente. Em crédito, o desvio vem da comparação, por "
         "grupo homogêneo (GH), entre a PD do GH e a BadRate observada no mesmo GH, descontado o ruído amostral, "
         "traduzida em falta de capital (fórmula IRB) ou de "
         "provisão, o que for maior. Em mercado de nível 2, vem da série do desvio da verificação independente de "
@@ -333,7 +333,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         f"ciclo de validação do tier. O capital econômico requerido é de <b>R$ {num(out['capital'])} milhões</b>, "
         f"equivalente a {pct(tot['Taxa de capital'])} da exposição em escopo.", est["resumo"]))
     s.append(Paragraph("<b>Palavras-chave:</b> risco de modelo; Pilar 2; ICAAP; capital econômico; validação de "
-                       "modelos; IPV; valor justo de nível 3; margem de conservadorismo.", est["resumo"]))
+                       "modelos; IPV; valor justo de nível 3; nota de risco do modelo.", est["resumo"]))
 
     # ------------------------------------------------------------------ 1. introdução
     s.append(Paragraph("1. Introdução", est["h1"]))
@@ -370,9 +370,9 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     s.append(Paragraph("3. Metodologia", est["h1"]))
     s.append(Paragraph("3.1 Formato do cálculo", est["h2"]))
     s.append(Paragraph("Para cada modelo <i>i</i> do escopo, com exposição <i>E<sub>i</sub></i>, desvio "
-                       "<i>D<sub>i</sub></i> no quantil <i>α</i> e no horizonte <i>h</i>, e margem de conservadorismo "
-                       "<i>MC</i> dada pela nota efetiva da validação, o capital é:", est["p0"]))
-    s.append(eq(r"$\mathrm{Capital}_i = E_i \cdot D_i(\alpha, h) \cdot \left[1 + MC(\mathrm{nota}_i)\right],"
+                       "<i>D<sub>i</sub></i> no quantil <i>α</i> e no horizonte <i>h</i>, e nota de risco do modelo "
+                       "<i>κ</i>, capturada pela validação independente, o capital é:", est["p0"]))
+    s.append(eq(r"$\mathrm{Capital}_i = E_i \cdot D_i(\alpha, h) \cdot \left[1 + \kappa(\mathrm{nota}_i)\right],"
                 r"\qquad \mathrm{Capital} = \sum_{i=1}^{n} \mathrm{Capital}_i$", "cap"))
     s.append(Paragraph(
         f"O quantil adotado é <i>α</i> = {pct(p.alfa)}, o mesmo nível de confiança da fórmula IRB (BCBS, 2005), com "
@@ -441,7 +441,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         [4.0 * cm, 5.4 * cm, 3.4 * cm], est), est))
     s.append(Paragraph(
         "A discriminação, medida pelo Gini, não é traduzida diretamente em perda: ela entra pela nota quantitativa "
-        "da validação e, portanto, pela margem de conservadorismo (Seção 3.7). O teste de discriminação usado como "
+        "da validação e, portanto, pela nota de risco do modelo <i>κ</i> (Seção 3.7). O teste de discriminação usado como "
         "referência é o de comparação da AUC atual com a do desenvolvimento (BCE, 2019; Engelmann, Hayden e "
         "Tasche, 2003).", est["p"]))
 
@@ -492,28 +492,28 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "Se nenhum modelo da família tiver indicador, adota-se o fator de pior caso da régua padronizada de "
         "referência. Em ambos os casos, o modelo aparece sinalizado na execução.", est["p0"]))
 
-    s.append(Paragraph("3.7 Margem de conservadorismo pela nota da validação", est["h2"]))
+    s.append(Paragraph("3.7 Nota de risco do modelo κ", est["h2"]))
     s.append(Paragraph(
         "A nota da validação independente combina um eixo quantitativo e um qualitativo, com três níveis cada "
         "(Robusto, Satisfatório, Insatisfatório), resultando nas notas de A a I da matriz de cores. Quanto pior a "
-        "nota, menos confiável é o desvio medido, e maior a margem de conservadorismo, no espírito das categorias "
-        "de margem da EBA (2017). A perda relativa <i>e</i> combina, nos dois eixos, a probabilidade de falha "
+        "nota, menos confiável é o desvio medido, e maior a nota de risco do modelo <i>κ</i>, conceito análogo à "
+        "margem de conservadorismo da EBA (2017). A perda relativa <i>e</i> combina, nos dois eixos, a probabilidade de falha "
         "<i>P</i> e a proporção de magnitude <i>π</i> das Tabelas 1 e 2 de Basileia (BCBS, 1996), com peso <i>ω</i> "
         "do eixo qualitativo, sendo <i>q</i> o nível quantitativo e <i>ql</i> o qualitativo da nota:", est["p0"]))
     s.append(eq(r"$e(\mathrm{nota}) = \dfrac{P_{q}\, \pi_{q} + \omega\, P_{ql}\, \pi_{ql}}{1 + \omega}, "
                 r"\qquad e(\mathrm{n/a}) = 1$", "e"))
-    s.append(Paragraph("A margem é a perda relativa normalizada entre a nota A, que recebe zero, e o modelo sem "
+    s.append(Paragraph("A nota de risco <i>κ</i> é a perda relativa normalizada entre a nota A, que recebe zero, e o modelo sem "
                        "validação, que recebe 100%:", est["p0"]))
-    s.append(eq(r"$MC(\mathrm{nota}) = \dfrac{e(\mathrm{nota}) - e(A)}{1 - e(A)}$", "mc"))
+    s.append(eq(r"$\kappa(\mathrm{nota}) = \dfrac{e(\mathrm{nota}) - e(A)}{1 - e(A)}$", "mc"))
     linhas = [[n, R.GRADE[n][0] if n != "n/a" else "-", R.GRADE[n][1] if n != "n/a" else "-", pct(e[n]), pct(mc[n]),
                num(1 + mc[n])] for n in sorted(mc, key=mc.get)]
-    s.append(_bloco_tabela(f"Tabela {nt()}. Margem de conservadorismo por nota (ω = {num(p.omega)}).", _tabela(
-        ["Nota", "Quanti", "Quali", "e(nota)", "MC", "Multiplicador"], linhas,
+    s.append(_bloco_tabela(f"Tabela {nt()}. Nota de risco do modelo κ por nota de validação (ω = {num(p.omega)}).", _tabela(
+        ["Nota", "Quanti", "Quali", "e(nota)", "κ", "Multiplicador"], linhas,
         [1.3 * cm, 2.6 * cm, 2.6 * cm, 2.2 * cm, 2.2 * cm, 2.4 * cm], est, alinha_dir=[3, 4, 5]), est,
         "Validação vencida (mais de 12 meses no tier G ou 36 no tier M) é tratada como ausência de validação. A "
-        "ordem das margens reproduz a matriz de cores: "
+        "ordem de κ reproduz a matriz de cores: "
         + ("atendida." if I.ordem_margem_ok(p) else "não atendida.")))
-    s.append(KeepTogether([_fig_margem(mc), Paragraph(f"Figura {nf()}. Margem de conservadorismo por nota.",
+    s.append(KeepTogether([_fig_margem(mc), Paragraph(f"Figura {nf()}. Nota de risco do modelo κ por nota de validação.",
                                                       est["cap"])]))
 
     # ------------------------------------------------------------------ 4. execução
@@ -522,9 +522,9 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     s.append(Paragraph(f"Na data-base de {_data(data_base)}, {rs['escopo_validos']} dos {rs['escopo_total']} "
                        "modelos do escopo estão com validação vigente.", est["p0"]))
     linhas = [[r["ID"], r["Tier"], r["Nota informada"], _data(r["Última validação"]), _data(r["Válida até"]),
-               r["Situação"], r["Nota efetiva"], pct(r["Margem MC"])] for _, r in det.iterrows()]
-    s.append(_bloco_tabela(f"Tabela {nt()}. Situação da validação e margem por modelo.", _tabela(
-        ["ID", "Tier", "Nota", "Última validação", "Válida até", "Situação", "Nota efetiva", "MC"], linhas,
+               r["Situação"], r["Nota efetiva"], pct(r["Nota de risco κ"])] for _, r in det.iterrows()]
+    s.append(_bloco_tabela(f"Tabela {nt()}. Situação da validação e nota de risco κ por modelo.", _tabela(
+        ["ID", "Tier", "Nota", "Última validação", "Válida até", "Situação", "Nota efetiva", "κ"], linhas,
         [1.3 * cm, 1.0 * cm, 1.1 * cm, 2.4 * cm, 2.2 * cm, 2.6 * cm, 1.8 * cm, 2.0 * cm], est, alinha_dir=[7]), est))
 
     s.append(Paragraph("4.2 Desvio por modelo", est["h2"]))
@@ -593,16 +593,16 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
             alinha_dir=[2, 3, 4, 5, 6]), est, "Escala = z<sub>α</sub> / z<sub>c</sub>."))
 
     s.append(Paragraph("4.3 Capital por modelo", est["h2"]))
-    linhas = [[r["ID"], r["Carteira ou família"], r["Nota efetiva"], pct(r["Desvio D"]), pct(r["Margem MC"]),
+    linhas = [[r["ID"], r["Carteira ou família"], r["Nota efetiva"], pct(r["Desvio D"]), pct(r["Nota de risco κ"]),
                pct(r["Taxa de capital"]), num(r["Exposição (R$ mi)"]), num(r["Capital (R$ mi)"])]
               for _, r in det.iterrows()]
     linhas.append(["Total", "", "", "", "", pct(tot["Taxa de capital"]), num(tot["Exposição (R$ mi)"]),
                    num(tot["Capital (R$ mi)"])])
     s.append(_bloco_tabela(f"Tabela {nt()}. Capital interno por modelo (R$ milhões).", _tabela(
-        ["ID", "Carteira ou família", "Nota", "D", "MC", "Taxa", "Exposição", "Capital"], linhas,
+        ["ID", "Carteira ou família", "Nota", "D", "κ", "Taxa", "Exposição", "Capital"], linhas,
         [1.3 * cm, 3.5 * cm, 1.2 * cm, 1.8 * cm, 1.8 * cm, 1.8 * cm, 2.3 * cm, 2.0 * cm], est,
         alinha_dir=[3, 4, 5, 6, 7], total=True), est,
-        "Taxa = D × (1 + MC). Capital = taxa × exposição. No total, a taxa é a média ponderada pela exposição."))
+        "Taxa = D × (1 + κ). Capital = taxa × exposição. No total, a taxa é a média ponderada pela exposição."))
     if len(det):
         s.append(KeepTogether([_fig_capital(det), Paragraph(f"Figura {nf()}. Capital interno por modelo.",
                                                             est["cap"])]))
@@ -653,7 +653,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
             s.append(Paragraph(f"Sem indicador; <i>D</i> = {pct(r['Desvio D'])} ({r['Fonte do desvio'].lower()}).",
                                est["p0"]))
         s.append(eq(rf"$\mathrm{{Capital}} = {mt(r['Exposição (R$ mi)'])} \times {mp(r['Desvio D'])} \times "
-                    rf"\left(1 + {mp(r['Margem MC'])}\right) = \mathbf{{{mt(r['Capital (R$ mi)'])}}}$"))
+                    rf"\left(1 + {mp(r['Nota de risco κ'])}\right) = \mathbf{{{mt(r['Capital (R$ mi)'])}}}$"))
 
     s.append(Paragraph("4.5 Consolidação", est["h2"]))
     linhas = [[r["Família"], str(r["Modelos"]), str(r["Sem validação vigente"]), num(r["Exposição (R$ mi)"]),
@@ -670,7 +670,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         est["p"]))
 
     s.append(Paragraph("4.6 Cenários", est["h2"]))
-    s.append(Paragraph("O desvio medido não depende da nota; a nota altera a margem. A tabela mostra o capital se "
+    s.append(Paragraph("O desvio medido não depende da nota; a nota altera <i>κ</i>. A tabela mostra o capital se "
                        "todos os modelos, ou apenas os pendentes, fossem validados na data-base com cada nota.",
                        est["p0"]))
     linhas = [[r["Nota"], num(r["Todos validados com a nota"]), num(r["Só os pendentes validados com a nota"])]
@@ -686,7 +686,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "O capital de risco de modelo e a declaração de apetite a riscos (RAS) medem populações diferentes. O capital "
         "cobre os modelos do escopo definido na Seção 2; a RAS mede a cobertura de validação do inventário total, "
         "com um mínimo definido pela instituição. Como premissa prudencial, todos os modelos do escopo devem estar "
-        "com validação ativa e em dia. Se não estiverem, recebem margem de 100%, que funciona como penalidade por "
+        "com validação ativa e em dia. Se não estiverem, recebem <i>κ</i> de 100%, que funciona como penalidade por "
         "descumprimento da premissa.", est["p"]))
     linhas = [["Modelos no escopo do capital", str(rs["escopo_total"])],
               ["Com validação vigente no escopo", str(rs["escopo_validos"])],
@@ -706,7 +706,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     s.append(Paragraph(
         "Os indicadores de desvio são produzidos pelo monitoramento (primeira linha) e verificados pela validação "
         "independente (segunda linha). Na revisão anual, reavaliam-se o nível de confiança, a confiança implícita "
-        "da sensibilidade de nível 3, as classes IRB, a margem de conservadorismo e a coerência entre o desvio "
+        "da sensibilidade de nível 3, as classes IRB, a nota de risco do modelo <i>κ</i> e a coerência entre o desvio "
         "medido e a nota da validação. As principais limitações, incorporadas como premissas, são:", est["p"]))
     for t in ("no IPV, o excesso sobre a tolerância é tratado como normal, embora tenha massa em zero quando o "
               "desvio fica dentro da faixa; a tolerância de cada família deve refletir a incerteza real da fonte;",
@@ -718,7 +718,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
               "janelas de doze meses sobrepostas no monitoramento de crédito: o teste de Jeffreys usa o número médio "
               "de contratos por janela, e a volatilidade medida pode ficar subestimada;",
               "GHs com poucos contratos tendem a não rejeitar o ruído binomial, e o desvio desses GHs fica igual a "
-              "zero; a margem de conservadorismo da nota é o que cobre essa incerteza;",
+              "zero; a nota de risco do modelo κ é o que cobre essa incerteza;",
               "em crédito, o crescimento do desvio com √h supõe passeio aleatório entre validações;",
               "a sensibilidade do nível 3 é tratada como equivalente a um quantil de "
               f"{pct(p.conf_sens)}; a convenção de cada mesa para premissas razoavelmente possíveis deve ser "
