@@ -329,7 +329,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     s.append(Paragraph(f"Data-base do cálculo: {_data(data_base)} · Documento gerado em {_data(hoje)}", est["autor"]))
     s.append(Paragraph(
         "<b>Resumo.</b> Este memorial documenta o cálculo do capital econômico de Pilar 2 para risco de modelo pela "
-        f"abordagem interna, sobre {len(det)} modelos e exposição de R$ {num(tot['Exposição (R$ mi)'])} milhões. Para "
+        f"abordagem interna, sobre {len(det)} modelos e exposição de R$ {num(tot['Exposição (R$ bi)'])} bilhões. Para "
         "cada modelo, o capital é a exposição multiplicada pelo desvio do modelo no quantil de "
         f"{pct(p.alfa)} em um ano, medido em indicadores internos de performance, e pela nota de risco do modelo κ, "
         "capturada pela validação independente. Em crédito, o desvio vem da comparação, por "
@@ -368,8 +368,8 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "hierarquia de valor justo (CPC 46), incluindo a contabilidade de hedge (Resolução CMN nº 4.966/2021), com "
         "exposição igual ao valor justo contábil absoluto.", est["p"]))
     linhas = [[r["ID"], r["Risco"], r["Carteira ou família"], r["Tier"], r["Nível"], r["Nota informada"],
-               _data(r["Última validação"]), num(r["Exposição (R$ mi)"])] for _, r in det.iterrows()]
-    s.append(_bloco_tabela(f"Tabela {nt()}. Base de entrada: modelos no escopo do capital (R$ milhões).", _tabela(
+               _data(r["Última validação"]), num(r["Exposição (R$ bi)"])] for _, r in det.iterrows()]
+    s.append(_bloco_tabela(f"Tabela {nt()}. Base de entrada: modelos no escopo do capital (exposição em R$ bilhões).", _tabela(
         ["ID", "Risco", "Carteira ou família", "Tier", "Nível", "Nota", "Última validação", "Exposição"], linhas,
         [1.3 * cm, 1.6 * cm, 3.6 * cm, 1.0 * cm, 1.1 * cm, 1.1 * cm, 2.4 * cm, 2.4 * cm], est, alinha_dir=[7]), est,
         "Tier G: validação anual. Tier M: validação a cada três anos. Nota em branco indica modelo sem validação."))
@@ -601,12 +601,12 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
 
     s.append(Paragraph("4.3 Capital por modelo", est["h2"]))
     linhas = [[r["ID"], r["Carteira ou família"], r["Nota efetiva"], pct(r["Desvio D"]), pct(r["Nota de risco κ"]),
-               pct(r["Taxa de capital"]), num(r["Exposição (R$ mi)"]), num(r["Capital (R$ mi)"])]
+               pct(r["Taxa de capital"]), num(r["Exposição (R$ bi)"]), num(r["Capital (R$ mi)"])]
               for _, r in det.iterrows()]
-    linhas.append(["Total", "", "", "", "", pct(tot["Taxa de capital"]), num(tot["Exposição (R$ mi)"]),
+    linhas.append(["Total", "", "", "", "", pct(tot["Taxa de capital"]), num(tot["Exposição (R$ bi)"]),
                    num(tot["Capital (R$ mi)"])])
-    s.append(_bloco_tabela(f"Tabela {nt()}. Capital interno por modelo (R$ milhões).", _tabela(
-        ["ID", "Carteira ou família", "Nota", "D", "κ", "Taxa", "Exposição", "Capital"], linhas,
+    s.append(_bloco_tabela(f"Tabela {nt()}. Capital interno por modelo (exposição em R$ bilhões; capital em R$ milhões).", _tabela(
+        ["ID", "Carteira ou família", "Nota", "D", "κ", "Taxa", "Exposição (bi)", "Capital (mi)"], linhas,
         [1.3 * cm, 3.5 * cm, 1.2 * cm, 1.8 * cm, 1.8 * cm, 1.8 * cm, 2.3 * cm, 2.0 * cm], est,
         alinha_dir=[3, 4, 5, 6, 7], total=True), est,
         "Taxa = D × (1 + κ). Capital = taxa × exposição. No total, a taxa é a média ponderada pela exposição."))
@@ -615,6 +615,8 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
                                                             est["cap"])]))
 
     s.append(Paragraph("4.4 Exemplos passo a passo", est["h2"]))
+    s.append(Paragraph("Os valores intermediários aparecem arredondados a duas casas; o cálculo usa a precisão completa, "
+                       "por isso refazer a conta com os números exibidos pode diferir na última casa.", est["p0"]))
     for fam in ("RC", "N2", "N3"):
         sub = det[det["Família"] == I.FAMILIAS[fam]]
         if not len(sub):
@@ -625,7 +627,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         s.append(Paragraph(
             f"<b>{r['ID']}, {r['Carteira ou família']}</b> ({fam_txt}, tier {r['Tier']}, <i>h</i> = "
             f"{r['Horizonte (anos)']:.0f} {'ano' if r['Horizonte (anos)'] == 1 else 'anos'}, nota efetiva {r['Nota efetiva']}, exposição de R$ "
-            f"{num(r['Exposição (R$ mi)'])} milhões).", est["p0"]))
+            f"{num(r['Exposição (R$ bi)'])} bilhões).", est["p0"]))
         h_ = f"{r['Horizonte (anos)']:.0f}"
         if fam == "RC" and r["Fonte do desvio"] == "Medido":
             dv = I.desvio(m, p)
@@ -659,14 +661,14 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         else:
             s.append(Paragraph(f"Sem indicador; <i>D</i> = {pct(r['Desvio D'])} ({r['Fonte do desvio'].lower()}).",
                                est["p0"]))
-        s.append(eq(rf"C = {mt(r['Exposição (R$ mi)'])} \times {mp(r['Desvio D'])} \times "
-                    rf"\bigl(1 + {mp(r['Nota de risco κ'])}\bigr) = \mathbf{{{mt(r['Capital (R$ mi)'])}}}"))
+        s.append(eq(rf"C = \text{{R\$}}\,{mt(r['Exposição (R$ bi)'])}\ \text{{bi}} \times {mp(r['Desvio D'])} \times "
+                    rf"\bigl(1 + {mp(r['Nota de risco κ'])}\bigr) = \text{{R\$}}\,\mathbf{{{mt(r['Capital (R$ mi)'])}}}\ \text{{mi}}"))
 
     s.append(Paragraph("4.5 Consolidação", est["h2"]))
-    linhas = [[r["Família"], str(r["Modelos"]), str(r["Sem validação vigente"]), num(r["Exposição (R$ mi)"]),
+    linhas = [[r["Família"], str(r["Modelos"]), str(r["Sem validação vigente"]), num(r["Exposição (R$ bi)"]),
                pct(r["Taxa de capital"]), num(r["Capital (R$ mi)"])] for _, r in resumo.iterrows()]
-    s.append(_bloco_tabela(f"Tabela {nt()}. Capital interno consolidado por família (R$ milhões).", _tabela(
-        ["Família", "Modelos", "Sem validação", "Exposição", "Taxa", "Capital"], linhas,
+    s.append(_bloco_tabela(f"Tabela {nt()}. Capital interno consolidado por família (exposição em R$ bilhões; capital em R$ milhões).", _tabela(
+        ["Família", "Modelos", "Sem validação", "Exposição (bi)", "Taxa", "Capital (mi)"], linhas,
         [4.4 * cm, 1.6 * cm, 2.2 * cm, 2.8 * cm, 2.0 * cm, 2.4 * cm], est, alinha_dir=[1, 2, 3, 4, 5], total=True),
         est))
     s.append(Paragraph(

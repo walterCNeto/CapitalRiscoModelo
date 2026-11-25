@@ -33,16 +33,16 @@ font-family:Arial;font-size:13px}
 with st.sidebar:
     st.markdown("### Parâmetros")
     data_base = st.date_input("Data-base", value=R.DATA_BASE, format="DD/MM/YYYY")
-    alfa = st.number_input("Confiança do desvio em um ano (%)", 90.0, 99.99, 99.9, 0.1, format="%.3f",
+    alfa = st.number_input("Confiança do desvio em um ano (%)", 90.0, 99.99, 99.9, 0.1, format="%.2f",
                            help="Quantil do desvio do modelo. Padrão: 99,9%, o nível do IRB.") / 100
-    conf_s = st.number_input("Confiança implícita da sensibilidade N3 (%)", 60.0, 99.0, 90.0, 1.0, format="%.3f",
+    conf_s = st.number_input("Confiança implícita da sensibilidade N3 (%)", 60.0, 99.0, 90.0, 1.0, format="%.2f",
                              help="Nível de confiança atribuído às premissas razoavelmente possíveis da divulgação do "
                                   "CPC 46 (padrão: 90%, como no ajuste de avaliação prudente).") / 100
     st.caption("Validade da validação: 12 meses (tier G) e 36 meses (tier M). O horizonte do desvio de crédito é o "
                "ciclo do tier (1 ou 3 anos); em mercado, 1 ano. Validação vencida ou ausente recebe nota de risco κ de 100%.")
     st.markdown("### Apetite a risco (RAS)")
     cob_min = st.number_input("Cobertura mínima de validação do inventário (%)", 0.0, 100.0, 80.0, 1.0,
-                              format="%.3f") / 100
+                              format="%.2f") / 100
     tot_fora = st.number_input("Modelos fora do escopo do capital", 0, 10000, 60, 1)
     val_fora = st.number_input("Desses, validados e em dia", 0, 10000, 50, 1)
     if val_fora > tot_fora:
@@ -66,8 +66,8 @@ if "serie_cred" not in st.session_state:
     st.session_state["serie_cred_nome"] = "série de exemplo"
 
 st.title("Capital de risco de modelo")
-st.caption("Pilar 2 · abordagem interna: capital = exposição × desvio do modelo no quantil α × (1 + nota de risco κ "
-           "conservadorismo da nota). Valores em R$ milhões. Inventário, séries e saldos ilustrativos.")
+st.caption("Pilar 2 · abordagem interna: capital = exposição × desvio do modelo no quantil α × (1 + nota de risco κ). "
+           "Exposições em R$ bilhões e capital em R$ milhões. Inventário, séries e saldos ilustrativos.")
 
 aba_inv, aba_res, aba_des, aba_mat, aba_ras, aba_cen, aba_mem = st.tabs(
     ["Inventário", "Resultado", "Desvio por modelo", "Matriz e nota de risco κ", "Premissa e RAS", "Cenários",
@@ -88,15 +88,15 @@ with aba_inv:
             "Nível (mercado)": st.column_config.SelectboxColumn(options=["N2", "N3"]),
             "Nota": st.column_config.SelectboxColumn(options=C.NOTAS9 + [C.SEM_VAL], required=True),
             "Última validação": st.column_config.DateColumn(format="DD/MM/YYYY"),
-            "Exposição (R$ mi)": st.column_config.NumberColumn(format="%.3f", min_value=0.0),
+            "Exposição (R$ bi)": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
             "Modelo": st.column_config.TextColumn(width="medium"),
             N.COL_CLASSE: st.column_config.SelectboxColumn(options=list(I.CLASSES), help="Só crédito."),
-            N.COL_LGD: st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=100.0,
+            N.COL_LGD: st.column_config.NumberColumn(format="%.2f", min_value=0.0, max_value=100.0,
                                                      help="Só crédito."),
-            N.COL_SENS: st.column_config.NumberColumn(format="%.3f", min_value=0.0,
+            N.COL_SENS: st.column_config.NumberColumn(format="%.2f", min_value=0.0,
                                                       help="Só N3: efeito no valor justo de premissas alternativas "
                                                            "razoavelmente possíveis (CPC 46, item 93(h)(ii))."),
-            N.COL_ALT: st.column_config.NumberColumn(format="%.3f", min_value=0.0,
+            N.COL_ALT: st.column_config.NumberColumn(format="%.2f", min_value=0.0,
                                                      help="Só N3: diferença para o modelo alternativo, % do VJ."),
         })
 
@@ -146,14 +146,14 @@ with aba_res:
     caixa(k[3], "Referência: régua padronizada (R$ mi)", C.num(ref))
     st.write("")
     st.subheader("Por família")
-    st.dataframe(fmt(resumo, pcts=["Taxa de capital"], nums=["Exposição (R$ mi)", "Capital (R$ mi)",
+    st.dataframe(fmt(resumo, pcts=["Taxa de capital"], nums=["Exposição (R$ bi)", "Capital (R$ mi)",
                                                            "Capital sem validação vigente"]),
                  hide_index=True, width="stretch")
     st.subheader("Por modelo")
     cols = ["ID", "Família", "Carteira ou família", "Tier", "Nota efetiva", "Horizonte (anos)", "Fonte do desvio",
-            "Desvio D", "Nota de risco κ", "Taxa de capital", "Exposição (R$ mi)", "Capital (R$ mi)"]
+            "Desvio D", "Nota de risco κ", "Taxa de capital", "Exposição (R$ bi)", "Capital (R$ mi)"]
     st.dataframe(fmt(det[cols], pcts=["Desvio D", "Nota de risco κ", "Taxa de capital"],
-                     nums=["Exposição (R$ mi)", "Capital (R$ mi)", "Horizonte (anos)"]),
+                     nums=["Exposição (R$ bi)", "Capital (R$ mi)", "Horizonte (anos)"]),
                  hide_index=True, width="stretch")
     if len(det):
         d2 = det.sort_values("Capital (R$ mi)", ascending=True)
@@ -356,8 +356,8 @@ with aba_ras:
         st.success("Todos os modelos do escopo do capital estão com validação ativa e em dia.")
     else:
         d = rs["descumprimento"][["ID", "Risco", "Carteira ou família", "Tier", "Nota informada", "Última validação",
-                                  "Válida até", "Situação", "Exposição (R$ mi)", "Capital (R$ mi)"]]
-        st.dataframe(fmt(datas(d), nums=["Exposição (R$ mi)", "Capital (R$ mi)"]), hide_index=True, width="stretch")
+                                  "Válida até", "Situação", "Exposição (R$ bi)", "Capital (R$ mi)"]]
+        st.dataframe(fmt(datas(d), nums=["Exposição (R$ bi)", "Capital (R$ mi)"]), hide_index=True, width="stretch")
     st.subheader("RAS: cobertura de validação do inventário total")
     k = st.columns(4)
     caixa(k[0], "Modelos no inventário total", f"{rs['inv_total']}")

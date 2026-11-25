@@ -180,7 +180,7 @@ def inventario_exemplo() -> pd.DataFrame:
         linhas.append({"ID": m.id, "Risco": C.NOME_RISCO[m.risco], "Carteira ou família": m.carteira, "Modelo": m.nome,
                        "Tier": m.tier, "Nível (mercado)": m.nivel if m.risco == "RM" else None,
                        "Nota": m.nota if m.nota else C.SEM_VAL, "Última validação": m.data_validacao,
-                       "Exposição (R$ mi)": float(m.saldo)})
+                       "Exposição (R$ bi)": float(m.saldo) / 1000})
     df = pd.DataFrame(linhas)
     df[COL_CLASSE] = [EXEMPLO_CRED.get(i, (None, None))[0] for i in df["ID"]]
     for c in COLS_IND[1:]:
@@ -202,6 +202,9 @@ def serie_exemplo_ipv() -> pd.DataFrame:
 
 def para_modelos(df: pd.DataFrame, serie_cred: pd.DataFrame | None = None,
                  serie_ipv: pd.DataFrame | None = None) -> tuple[list[R.Modelo], list[str]]:
+    df = df.copy()
+    if "Exposição (R$ bi)" in df.columns:      # entrada em bilhões; o motor trabalha em milhões
+        df["Exposição (R$ mi)"] = pd.to_numeric(df["Exposição (R$ bi)"], errors="coerce") * 1000
     base, avisos = C.para_modelos(df)
     est = estat_credito(serie_cred) if serie_cred is not None and len(serie_cred) else {}
     est_m = estat_mercado(serie_ipv) if serie_ipv is not None and len(serie_ipv) else {}
@@ -243,7 +246,7 @@ def calcular(p: I.ParamInt, inv: list[R.Modelo], data_base: dt.date) -> dict:
                        "PD estressada média": d.get("pd_estressada_media"),
                        "Desvio capital IRB": d.get("D_K"), "Desvio provisão": d.get("D_PE"),
                        "Critério": d.get("criterio", "-"), "Desvio D": o["D"], "Nota de risco κ": o["mc"],
-                       "Taxa de capital": o["D"] * (1 + o["mc"]), "Exposição (R$ mi)": m.saldo,
+                       "Taxa de capital": o["D"] * (1 + o["mc"]), "Exposição (R$ bi)": m.saldo / 1000,
                        "Capital (R$ mi)": o["capital"]})
     det = pd.DataFrame(linhas)
     res = []
@@ -251,18 +254,18 @@ def calcular(p: I.ParamInt, inv: list[R.Modelo], data_base: dt.date) -> dict:
         sub = det[det["Família"] == nome] if len(det) else det
         if not len(sub):
             continue
-        cap, exp_ = sub["Capital (R$ mi)"].sum(), sub["Exposição (R$ mi)"].sum()
+        cap, exp_ = sub["Capital (R$ mi)"].sum(), sub["Exposição (R$ bi)"].sum()
         nv = sub[sub["Situação"] != "Vigente"]
-        res.append({"Família": nome, "Modelos": len(sub), "Sem validação vigente": len(nv), "Exposição (R$ mi)": exp_,
-                    "Capital (R$ mi)": cap, "Taxa de capital": cap / exp_ if exp_ else 0.0,
+        res.append({"Família": nome, "Modelos": len(sub), "Sem validação vigente": len(nv), "Exposição (R$ bi)": exp_,
+                    "Capital (R$ mi)": cap, "Taxa de capital": cap / (1000 * exp_) if exp_ else 0.0,
                     "Capital sem validação vigente": nv["Capital (R$ mi)"].sum()})
     cap_t = float(det["Capital (R$ mi)"].sum()) if len(det) else 0.0
-    exp_t = float(det["Exposição (R$ mi)"].sum()) if len(det) else 0.0
+    exp_t = float(det["Exposição (R$ bi)"].sum()) if len(det) else 0.0
     nv = det[det["Situação"] != "Vigente"] if len(det) else det
-    res.append({"Família": "Total", "Modelos": len(det), "Sem validação vigente": len(nv), "Exposição (R$ mi)": exp_t,
-                "Capital (R$ mi)": cap_t, "Taxa de capital": cap_t / exp_t if exp_t else 0.0,
+    res.append({"Família": "Total", "Modelos": len(det), "Sem validação vigente": len(nv), "Exposição (R$ bi)": exp_t,
+                "Capital (R$ mi)": cap_t, "Taxa de capital": cap_t / (1000 * exp_t) if exp_t else 0.0,
                 "Capital sem validação vigente": float(nv["Capital (R$ mi)"].sum()) if len(nv) else 0.0})
-    return {"detalhe": det, "resumo": pd.DataFrame(res), "capital": cap_t, "exposicao": exp_t, "margem": a["margem"]}
+    return {"detalhe": det, "resumo": pd.DataFrame(res), "capital": cap_t, "exposicao": 1000 * exp_t, "margem": a["margem"]}
 
 
 def referencia_regua(inv: list[R.Modelo], data_base: dt.date) -> float:

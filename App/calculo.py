@@ -37,14 +37,18 @@ NIVEIS = list(R.NIVEIS)
 
 
 # ----------------------------------------------------------------------------- formatação pt-BR
-def num(x: float, casas: int = 3) -> str:
+def num(x: float, casas: int = 2) -> str:
+    """Número no padrão brasileiro, com arredondamento comercial (meio para cima) e duas casas por padrão."""
+    from decimal import ROUND_HALF_UP, Decimal
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return ""
-    x = float(x)
-    return f"{R._r3(x) if casas == 3 else round(x, casas):,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    v = float(Decimal(repr(float(x))).quantize(Decimal(1).scaleb(-casas), rounding=ROUND_HALF_UP))
+    if v == 0:
+        v = 0.0                                  # evita "-0,00"
+    return f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def pct(x: float, casas: int = 3) -> str:
+def pct(x: float, casas: int = 2) -> str:
     return num(100 * x, casas) + "%"
 
 
