@@ -22,6 +22,7 @@ Capital_i = Exposição_i × D_i(α, h) × (1 + κ(nota_i))
 ```
 conda activate capitalrm
 pip install -r requirements.txt
+# para as fórmulas do memorial em LaTeX: MiKTeX ou TeX Live com pdflatex no PATH
 streamlit run app.py
 ```
 
@@ -44,7 +45,9 @@ streamlit run app.py
 - `rmint.py`: motor da abordagem interna (desvios, fórmula IRB por classe, nota de risco κ).
 - `rmcap.py`, `calculo.py`: matriz de notas, validade, RAS e régua padronizada de referência.
 - `memorial.py`: memorial de cálculo em PDF (reportlab).
-- `formulas.py`: fórmulas do memorial em LaTeX (mathtext, fonte STIX) convertidas em vetor.
+- `formulas.py`: fórmulas do memorial compostas pelo pdflatex (Times, mathptmx) e embutidas em vetor no PDF;
+  sem LaTeX instalado, usa o mathtext do matplotlib.
+- `packages.txt`: pacotes do sistema para o Streamlit Cloud (LaTeX mínimo para as fórmulas).
 - `dados/`: séries de exemplo de crédito e de IPV.
 - `fonts/`: Liberation Serif (licença SIL OFL 1.1).
 

@@ -21,6 +21,16 @@ from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTem
                                 TableStyle)
 from scipy.stats import beta as B
 
+_RLParagraph = Paragraph
+
+
+def Paragraph(texto, estilo, *a, **k):  # noqa: N802
+    """Paragraph com sub e sobrescritos em corpo menor e deslocamento curto (não invadem a linha vizinha)."""
+    if isinstance(texto, str):
+        texto = (texto.replace("<sub>", '<sub rise="2" size="7.5">')
+                 .replace("<super>", '<super rise="3.5" size="7.5">'))
+    return _RLParagraph(texto, estilo, *a, **k)
+
 import calculo as C
 import rmcap as R
 
@@ -281,20 +291,18 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         return cont["f"]
 
     eqs = {}
+    lista_eq = []
 
     def eq(tex, chave=None):
         """Equação em destaque, centrada, com número à direita quando tem chave."""
-        from formulas import desenho
-        d_ = desenho(tex, 11.5)
+        from formulas import EquacaoLatex
+        larg = 16.2 * cm
+        d_ = EquacaoLatex(tex, 11.0, larg - 2.4 * cm)
+        lista_eq.append(d_)
         rot = ""
         if chave:
             eqs[chave] = len(eqs) + 1
             rot = f"({eqs[chave]})"
-        larg = 16.2 * cm
-        if d_.width > larg - 2.4 * cm:
-            esc = (larg - 2.4 * cm) / d_.width
-            d_.scale(esc, esc)
-            d_.width, d_.height = d_.width * esc, d_.height * esc
         t_ = Table([["", d_, Paragraph(rot, est["eqn"])]], colWidths=[1.2 * cm, larg - 2.4 * cm, 1.2 * cm])
         t_.setStyle(TableStyle([("ALIGN", (1, 0), (1, 0), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                                 ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
@@ -370,18 +378,18 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     s.append(Paragraph("3. Metodologia", est["h1"]))
     s.append(Paragraph("3.1 Formato do cálculo", est["h2"]))
     s.append(Paragraph("Para cada modelo <i>i</i> do escopo, com exposição <i>E<sub>i</sub></i>, desvio "
-                       "<i>D<sub>i</sub></i> no quantil <i>α</i> e no horizonte <i>h</i>, e nota de risco do modelo "
-                       "<i>κ</i>, capturada pela validação independente, o capital é:", est["p0"]))
-    s.append(eq(r"$\mathrm{Capital}_i = E_i \cdot D_i(\alpha, h) \cdot \left[1 + \kappa(\mathrm{nota}_i)\right],"
-                r"\qquad \mathrm{Capital} = \sum_{i=1}^{n} \mathrm{Capital}_i$", "cap"))
+                       "<i>D<sub>i</sub></i> no quantil <i>α</i> e no horizonte <i>h</i>, nota de validação "
+                       "<i>ν<sub>i</sub></i> (de A a I, ou n/a) e nota de risco do modelo <i>κ</i>, capturada pela "
+                       "validação independente, o capital <i>C<sub>i</sub></i> é:", est["p0"]))
+    s.append(eq(r"C_i = E_i\, D_i(\alpha, h)\,\bigl[1 + \kappa(\nu_i)\bigr], \qquad C = \sum_{i=1}^{n} C_i", "cap"))
     s.append(Paragraph(
         f"O quantil adotado é <i>α</i> = {pct(p.alfa)}, o mesmo nível de confiança da fórmula IRB (BCBS, 2005), com "
-        f"<i>z<sub>α</sub></i> = Φ<super>−1</super>(<i>α</i>) = {num(z)}. A soma em (" + ref_eq("cap") + ") não "
-        "reconhece diversificação entre modelos, o que é conservador.", est["p0"]))
+        f"<i>z<sub>α</sub></i> = Φ<super>−1</super>(<i>α</i>) = {num(z)}.", est["p0"]))
     s.append(Paragraph("3.2 Horizonte do desvio", est["h2"]))
     s.append(Paragraph(
-        "Em crédito, um erro de calibragem permanece sem detecção, no máximo, até a validação seguinte. O horizonte "
-        "<i>h</i> é o ciclo de validação do tier: <i>h</i> = 1 ano no tier G e <i>h</i> = 3 anos no tier M. "
+        "Em crédito, um desvio de calibragem é capturado pelo monitoramento mensal de performance dos modelos, e a "
+        "correção, por recalibragem, ocorre no ciclo de revisão e validação do modelo. Por isso, o horizonte <i>h</i> "
+        "é o ciclo de validação do tier: <i>h</i> = 1 ano no tier G e <i>h</i> = 3 anos no tier M. "
         "Assume-se como premissa que o desvio evolui como passeio aleatório entre validações, de modo que sua "
         "dispersão cresce com √<i>h</i>. Em mercado, o horizonte é de um ano para os dois tiers: no nível 2, a "
         "verificação independente de preços é um controle mensal que ajusta a marcação quando o desvio passa da "
@@ -396,7 +404,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "modelo é a distância entre a PD do GH e a BadRate que o mesmo GH apresenta no monitoramento. Para cada GH "
         "<i>g</i> e janela <i>t</i> de doze meses, com <i>n<sub>g,t</sub></i> contratos, define-se o desvio absoluto:",
         est["p0"]))
-    s.append(eq(r"$d_{g,t} = BR_{g,t} - PD_g, \qquad BR_{g,t} = \dfrac{\mathrm{bads}_{g,t}}{n_{g,t}}$", "d"))
+    s.append(eq(r"d_{g,t} = \mathrm{BR}_{g,t} - \mathrm{PD}_g, \qquad \mathrm{BR}_{g,t} = \frac{\text{bads}_{g,t}}{n_{g,t}}", "d"))
     s.append(Paragraph(
         "O desvio absoluto, e não a razão entre BadRate e PD, faz com que GHs de PD baixa gerem naturalmente desvios "
         "pequenos e dispensa o logaritmo quando a BadRate é zero. Só conta o desvio que não é ruído amostral, em dois "
@@ -404,20 +412,20 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "considerada apenas se a PD do GH ficar fora do intervalo de Jeffreys de 95% da BadRate acumulada, que é o "
         "teste de calibragem por grau de rating do BCE (2019). Como as janelas de doze meses se sobrepõem, o tamanho "
         "amostral do teste é o número médio de contratos por janela:", est["p0"]))
-    s.append(eq(r"$\overline{BR}_g = \dfrac{\sum_t \mathrm{bads}_{g,t}}{\sum_t n_{g,t}}, \qquad "
-                r"b_g = \left(\overline{BR}_g - PD_g\right) \cdot \mathbf{1}\left[PD_g \notin IC^{J}_{95\%}"
-                r"\left(\overline{BR}_g;\ \bar{n}_g\right)\right]$", "vies"))
+    s.append(eq(r"\overline{\mathrm{BR}}_g = \frac{\sum_t \text{bads}_{g,t}}{\sum_t n_{g,t}}, \qquad "
+                r"b_g = \bigl(\overline{\mathrm{BR}}_g - \mathrm{PD}_g\bigr)\, \mathbf{1}\Bigl\{\mathrm{PD}_g \notin "
+                r"\mathrm{IC}^{\mathrm{J}}_{95\%}\bigl(\overline{\mathrm{BR}}_g;\, \bar{n}_g\bigr)\Bigr\}", "vies"))
     s.append(Paragraph(
         "A <b>volatilidade</b> <i>σ<sub>g</sub></i> é a variância observada do desvio menos a variância que o "
         "tamanho da amostra explica sozinho (binomial). Ela entra apenas se o teste de sobredispersão indicar "
         "variação além do ruído binomial, isto é, se a estatística (<i>k</i> − 1) <i>s</i><super>2</super> / "
         "<i>v<sub>g</sub></i> superar o quantil de 95% da distribuição χ<super>2</super> com <i>k</i> − 1 graus de "
         "liberdade, sendo <i>k</i> o número de janelas:", est["p0"]))
-    s.append(eq(r"$v_g = \dfrac{1}{k}\sum_t \dfrac{PD_g\,(1 - PD_g)}{n_{g,t}}, \qquad "
-                r"\sigma_g^2 = \max\left(0,\ s^2_{d_g} - v_g\right) \cdot \mathbf{1}\left["
-                r"\dfrac{(k-1)\, s^2_{d_g}}{v_g} > \chi^2_{0{,}95;\,k-1}\right]$", "sig"))
+    s.append(eq(r"v_g = \frac{1}{k}\sum_{t=1}^{k} \frac{\mathrm{PD}_g(1 - \mathrm{PD}_g)}{n_{g,t}}, \qquad "
+                r"\sigma_g^2 = \max\bigl(0,\; s^2_{d_g} - v_g\bigr)\, \mathbf{1}\Bigl\{"
+                r"\frac{(k-1)\, s^2_{d_g}}{v_g} > \chi^2_{0{,}95;\,k-1}\Bigr\}", "sig"))
     s.append(Paragraph("A PD do GH no quantil <i>α</i> e no horizonte <i>h</i> é:", est["p0"]))
-    s.append(eq(r"$PD^{*}_g = PD_g + \max\left(0,\ b_g + z_{\alpha}\, \sigma_g \sqrt{h}\right)$", "pds"))
+    s.append(eq(r"\mathrm{PD}^{*}_g = \mathrm{PD}_g + \max\bigl(0,\; b_g + z_{\alpha}\, \sigma_g \sqrt{h}\bigr)", "pds"))
     s.append(Paragraph(
         "A PD estressada é traduzida em perda de duas formas, e adota-se a maior. A primeira é a falta de capital: a "
         "diferença entre o capital <i>K</i> da fórmula IRB (BCBS, 2005; Gordy, 2003; Vasicek, 2002) avaliado na "
@@ -425,14 +433,14 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "classe (Tabela " + str(cont["t"] + 1) + "). A curva de <i>K</i> é íngreme nas PDs baixas, por isso o filtro "
         "de ruído é essencial: um desvio de 0,3% para 0,6% só gera capital se for estatisticamente real.",
         est["p0"]))
-    s.append(eq(r"$K(PD) = LGD \left[\Phi\left(\dfrac{\Phi^{-1}(PD) + \sqrt{R}\,\Phi^{-1}(0{,}999)}{\sqrt{1-R}}"
-                r"\right) - PD\right] \cdot MA$", "k"))
+    s.append(eq(r"K(\mathrm{PD}) = \mathrm{LGD}\left[\Phi\!\left(\frac{\Phi^{-1}(\mathrm{PD}) + \sqrt{R}\,"
+                r"\Phi^{-1}(0{,}999)}{\sqrt{1-R}}\right) - \mathrm{PD}\right] \mathrm{MA}", "k"))
     s.append(Paragraph(
         "A segunda é a falta de provisão: a perda esperada adicional em doze meses que a PD subestimada deixaria de "
         "provisionar (Resolução CMN nº 4.966/2021). O desvio do modelo é a média dos desvios dos GHs ponderada pela "
         "participação <i>w<sub>g</sub></i> de cada GH no saldo:", est["p0"]))
-    s.append(eq(r"$D_{RC} = \sum_g w_g \max\left\{K(PD^{*}_g) - K(PD_g);\ \ \left(PD^{*}_g - PD_g\right)"
-                r" \cdot LGD\right\}$", "drc"))
+    s.append(eq(r"D_{\mathrm{RC}} = \sum_g w_g \max\Bigl\{K(\mathrm{PD}^{*}_g) - K(\mathrm{PD}_g);\;\; "
+                r"\bigl(\mathrm{PD}^{*}_g - \mathrm{PD}_g\bigr)\,\mathrm{LGD}\Bigr\}", "drc"))
     s.append(_bloco_tabela(f"Tabela {nt()}. Correlação de ativos e ajuste de prazo da fórmula IRB por classe.", _tabela(
         ["Classe", "Correlação R", "Ajuste de prazo MA"],
         [["Corporativo", "0,12 a 0,24, decrescente na PD", f"Sim (M = {num(p.maturidade)})"],
@@ -454,20 +462,19 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "dispersão entre fontes, largura do intervalo indicativo), resumida na tolerância <i>τ</i> da política de "
         "apreçamento. Errar dentro dessa faixa não é erro de modelo, e só conta o excesso sobre a tolerância:",
         est["p0"]))
-    s.append(eq(r"$e_{f,t} = \mathrm{sinal}\left(d_{f,t}\right) \cdot \max\left(0,\ \left|d_{f,t}\right| - "
-                r"\tau_{f,t}\right)$", "exc"))
+    s.append(eq(r"e_{f,t} = \operatorname{sinal}(d_{f,t})\, \max\bigl(0,\; |d_{f,t}| - \tau_{f,t}\bigr)", "exc"))
     s.append(Paragraph(
         "O excesso médio é o viés da família, considerado apenas se o teste <i>t</i> rejeitar média zero a 95%, com "
         "<i>k</i> observações; a volatilidade é o desvio-padrão do excesso:", est["p0"]))
-    s.append(eq(r"$\bar{e}_f = \dfrac{1}{k}\sum_t e_{f,t}, \qquad b_f = \bar{e}_f \cdot \mathbf{1}\left["
-                r"\dfrac{\left|\bar{e}_f\right|}{s_{e_f} / \sqrt{k}} > t_{0{,}975;\,k-1}\right], \qquad "
-                r"\sigma_f = s_{e_f}$", "bf"))
+    s.append(eq(r"\bar{e}_f = \frac{1}{k}\sum_{t=1}^{k} e_{f,t}, \qquad b_f = \bar{e}_f\, \mathbf{1}\Bigl\{"
+                r"\frac{|\bar{e}_f|}{s_{e_f}/\sqrt{k}} > t_{0{,}975;\,k-1}\Bigr\}, \qquad "
+                r"\sigma_f = s_{e_f}", "bf"))
     s.append(Paragraph(
         "O desvio é bilateral, pois errar para cima ou para baixo é falha de apreçamento. O desvio da família é o "
         "quantil <i>α</i> do excesso absoluto, e o do modelo é a média ponderada pela participação <i>w<sub>f</sub></i> "
         "de cada família no valor justo:", est["p0"]))
-    s.append(eq(r"$e_f \sim N\left(b_f,\ \sigma_f^2\right), \qquad \mathrm{Pr}\left(\left|e_f\right| \leq D_f\right)"
-                r" = \alpha, \qquad D_{N2} = \sum_f w_f\, D_f$", "dn2"))
+    s.append(eq(r"e_f \sim \mathcal{N}\bigl(b_f,\, \sigma_f^2\bigr), \qquad \Pr\bigl(|e_f| \le D_f\bigr)"
+                r" = \alpha, \qquad D_{\mathrm{N2}} = \sum_f w_f D_f", "dn2"))
 
     s.append(Paragraph("3.5 Mercado de nível 3: sensibilidade a premissas não observáveis", est["h2"]))
     s.append(Paragraph(
@@ -479,7 +486,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "(Regulamento Delegado (UE) 2016/101, art. 11). Atribui-se à sensibilidade divulgada o nível de confiança "
         f"<i>c</i> = {pct(p.conf_sens)}, o mesmo do ajuste de avaliação prudente, e leva-se o valor ao quantil "
         "<i>α</i>:", est["p0"]))
-    s.append(eq(r"$D_{N3} = \max(s, a) \cdot \dfrac{z_{\alpha}}{z_{c}}$", "dn3"))
+    s.append(eq(r"D_{\mathrm{N3}} = \max(s, a)\, \frac{z_{\alpha}}{z_{c}}", "dn3"))
     s.append(Paragraph(
         f"Com os parâmetros adotados, <i>z<sub>α</sub></i> / <i>z<sub>c</sub></i> = {num(z)} / {num(zc)} = "
         f"{num(z / zc)}. O tratamento mantém o pior caso limitado ao conjunto de avaliações plausíveis, como na "
@@ -500,11 +507,11 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "margem de conservadorismo da EBA (2017). A perda relativa <i>e</i> combina, nos dois eixos, a probabilidade de falha "
         "<i>P</i> e a proporção de magnitude <i>π</i> das Tabelas 1 e 2 de Basileia (BCBS, 1996), com peso <i>ω</i> "
         "do eixo qualitativo, sendo <i>q</i> o nível quantitativo e <i>ql</i> o qualitativo da nota:", est["p0"]))
-    s.append(eq(r"$e(\mathrm{nota}) = \dfrac{P_{q}\, \pi_{q} + \omega\, P_{ql}\, \pi_{ql}}{1 + \omega}, "
-                r"\qquad e(\mathrm{n/a}) = 1$", "e"))
+    s.append(eq(r"e(\nu) = \frac{P_{q}\, \pi_{q} + \omega\, P_{\mathit{ql}}\, \pi_{\mathit{ql}}}{1 + \omega}, "
+                r"\qquad e(\text{n/a}) = 1", "e"))
     s.append(Paragraph("A nota de risco <i>κ</i> é a perda relativa normalizada entre a nota A, que recebe zero, e o modelo sem "
                        "validação, que recebe 100%:", est["p0"]))
-    s.append(eq(r"$\kappa(\mathrm{nota}) = \dfrac{e(\mathrm{nota}) - e(A)}{1 - e(A)}$", "mc"))
+    s.append(eq(r"\kappa(\nu) = \frac{e(\nu) - e(\mathrm{A})}{1 - e(\mathrm{A})}", "mc"))
     linhas = [[n, R.GRADE[n][0] if n != "n/a" else "-", R.GRADE[n][1] if n != "n/a" else "-", pct(e[n]), pct(mc[n]),
                num(1 + mc[n])] for n in sorted(mc, key=mc.get)]
     s.append(_bloco_tabela(f"Tabela {nt()}. Nota de risco do modelo κ por nota de validação (ω = {num(p.omega)}).", _tabela(
@@ -625,35 +632,35 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
             g = max(dv["ghs"], key=lambda x: x["peso"] * x["D"])
             s.append(Paragraph(f"No GH {g['gh']}, que mais contribui para o desvio do modelo (peso de "
                                f"{pct(g['peso'])} no saldo):", est["p0"]))
-            s.append(eq(rf"$PD^{{*}}_{{{g['gh']}}} = {mp(g['pd'])} + \max\left(0,\ {mp(g['vies'])} + {mt(z)} \times "
-                        rf"{mp(g['sigma'])} \times \sqrt{{{h_}}}\right) = {mp(g['pd_estressada'])}$"))
-            s.append(eq(rf"$D_{{{g['gh']}}} = \max\left\{{{mp(g['D_K'])};\ \ {mp(g['D_PE'])}\right\}} = {mp(g['D'])}$"))
+            s.append(eq(rf"\mathrm{{PD}}^{{*}}_{{{g['gh']}}} = {mp(g['pd'])} + \max\bigl(0,\; {mp(g['vies'])} + {mt(z)} \times "
+                        rf"{mp(g['sigma'])} \times \sqrt{{{h_}}}\bigr) = {mp(g['pd_estressada'])}"))
+            s.append(eq(rf"D_{{{g['gh']}}} = \max\bigl\{{{mp(g['D_K'])};\;\; {mp(g['D_PE'])}\bigr\}} = {mp(g['D'])}"))
             if len(dv["ghs"]) <= 3:
                 soma = r" + ".join(rf"{mt(x['peso'])} \times {mp(x['D'])}" for x in dv["ghs"])
-                s.append(eq(rf"$D_{{RC}} = {soma} = {mp(dv['D'])}$"))
+                s.append(eq(rf"D_{{\mathrm{{RC}}}} = {soma} = {mp(dv['D'])}"))
             else:
                 s.append(Paragraph("Somando os GHs com os pesos e desvios da tabela de calibragem por GH:", est["p0"]))
-                s.append(eq(rf"$D_{{RC}} = \sum_{{g=1}}^{{{len(dv['ghs'])}}} w_g\, D_g = {mp(dv['D'])}$"))
+                s.append(eq(rf"D_{{\mathrm{{RC}}}} = \sum_{{g=1}}^{{{len(dv['ghs'])}}} w_g D_g = {mp(dv['D'])}"))
         elif fam == "N2" and r["Fonte do desvio"] == "Medido":
             dv = I.desvio(m, p)
             f_ = max(dv["familias"], key=lambda x: x["peso"] * x["D"])
             s.append(Paragraph(f"Na família {f_['familia']}, que mais contribui para o desvio do modelo (peso de "
                                f"{pct(f_['peso'])} no valor justo), com tolerância média de {pct(f_['tau'])}:",
                                est["p0"]))
-            s.append(eq(rf"$e_f \sim N\left({mp(f_['vies'])},\ \left({mp(f_['sigma'])}\right)^2\right)\ \Rightarrow\ "
-                        rf"D_f = {mp(f_['D'])}$"))
+            s.append(eq(rf"e_f \sim \mathcal{{N}}\bigl({mp(f_['vies'])},\, ({mp(f_['sigma'])})^2\bigr) \;\Longrightarrow\; "
+                        rf"D_f = {mp(f_['D'])}"))
             soma = r" + ".join(rf"{mt(x['peso'])} \times {mp(x['D'])}" for x in dv["familias"])
-            s.append(eq(rf"$D_{{N2}} = {soma} = {mp(dv['D'])}$"))
+            s.append(eq(rf"D_{{\mathrm{{N2}}}} = {soma} = {mp(dv['D'])}"))
         elif fam == "N3" and r["Fonte do desvio"] == "Medido":
             sv, av = m.ind.get("sens"), m.ind.get("alt")
-            base_ = (rf"\max\left({mp(sv)},\ {mp(av)}\right)" if (sv is not None and av is not None)
+            base_ = (rf"\max\bigl({mp(sv)},\, {mp(av)}\bigr)" if (sv is not None and av is not None)
                      else mp(sv if sv is not None else av))
-            s.append(eq(rf"$D_{{N3}} = {base_} \times {mt(z / zc)} = {mp(r['Desvio D'])}$"))
+            s.append(eq(rf"D_{{\mathrm{{N3}}}} = {base_} \times {mt(z / zc)} = {mp(r['Desvio D'])}"))
         else:
             s.append(Paragraph(f"Sem indicador; <i>D</i> = {pct(r['Desvio D'])} ({r['Fonte do desvio'].lower()}).",
                                est["p0"]))
-        s.append(eq(rf"$\mathrm{{Capital}} = {mt(r['Exposição (R$ mi)'])} \times {mp(r['Desvio D'])} \times "
-                    rf"\left(1 + {mp(r['Nota de risco κ'])}\right) = \mathbf{{{mt(r['Capital (R$ mi)'])}}}$"))
+        s.append(eq(rf"C = {mt(r['Exposição (R$ mi)'])} \times {mp(r['Desvio D'])} \times "
+                    rf"\bigl(1 + {mp(r['Nota de risco κ'])}\bigr) = \mathbf{{{mt(r['Capital (R$ mi)'])}}}"))
 
     s.append(Paragraph("4.5 Consolidação", est["h2"]))
     linhas = [[r["Família"], str(r["Modelos"]), str(r["Sem validação vigente"]), num(r["Exposição (R$ mi)"]),
@@ -771,6 +778,8 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         s.append(Paragraph(r_, est["ref"]))
 
     s = [x for item in s for x in (item if isinstance(item, list) else [item])]
+    from formulas import preparar
+    preparar(lista_eq)
     buf = io.BytesIO()
     titulo = "Capital econômico para risco de modelo: memorial de cálculo"
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2.4 * cm, rightMargin=2.4 * cm, topMargin=2.2 * cm,
