@@ -17,11 +17,9 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 SERIE_CRED = os.path.join(_DIR, "dados", "serie_credito_exemplo.csv")
 SERIE_IPV = os.path.join(_DIR, "dados", "serie_ipv_exemplo.csv")
 
-COL_CLASSE, COL_PD, COL_LGD = "Classe IRB", "PD média (%)", "LGD (%)"
-COL_MU_C, COL_SG_C = "μ log(DR/PD)", "σ log(DR/PD)"
-COL_MU_I, COL_SG_I = "μ desvio IPV (%)", "σ desvio IPV (p.p.)"
+COL_CLASSE, COL_LGD = "Classe IRB", "LGD (%)"
 COL_SENS, COL_ALT = "Sensibilidade CPC 46 (%)", "Dif. modelo alternativo (%)"
-COLS_IND = [COL_CLASSE, COL_PD, COL_LGD, COL_MU_C, COL_SG_C, COL_MU_I, COL_SG_I, COL_SENS, COL_ALT]
+COLS_IND = [COL_CLASSE, COL_LGD, COL_SENS, COL_ALT]
 
 EXEMPLO_CRED = {"RC-01": ("Varejo outros", 40.0), "RC-02": ("Varejo outros", 35.0), "RC-03": ("Varejo outros", 45.0),
                 "RC-04": ("Varejo outros", 35.0), "RC-05": ("Varejo imobiliário", 20.0),
@@ -69,34 +67,88 @@ def _padroniza(df: pd.DataFrame, mapa: dict) -> pd.DataFrame:
 
 
 def ler_serie_credito(arq) -> pd.DataFrame:
-    return _padroniza(_ler(arq), {"ID": ("id", "modelo"), "Data": ("data", "date"),
-                                  "PD prevista (%)": ("pd prevista (%)", "pd prevista", "pd"),
-                                  "Taxa de default (%)": ("taxa de default (%)", "taxa de default", "dr",
-                                                          "default observado")})
+    """Série de calibragem por GH: ID, Data, GH, PD do GH (%), Contratos, Bads, Saldo (R$ mi)."""
+    df = _padroniza(_ler(arq), {"ID": ("id", "modelo"), "Data": ("data", "date"), "GH": ("gh", "grupo", "rating"),
+                                "PD do GH (%)": ("pd do gh (%)", "pd do gh", "pd (%)", "pd"),
+                                "Contratos": ("contratos", "n", "quantidade"),
+                                "Bads": ("bads", "maus", "defaults", "inadimplentes"),
+                                "Saldo (R$ mi)": ("saldo (r$ mi)", "saldo", "exposição", "exposicao")})
+    df["GH"] = df["GH"].astype(int)
+    return df
 
 
 def ler_serie_ipv(arq) -> pd.DataFrame:
-    return _padroniza(_ler(arq), {"ID": ("id", "modelo"), "Data": ("data", "date"),
-                                  "Desvio IPV (%)": ("desvio ipv (%)", "desvio ipv", "desvio", "ipv")})
+    """Série do IPV por família de instrumento: ID, Data, Família de instrumento, Desvio IPV (%), Tolerância (%),
+    Valor justo (R$ mi)."""
+    raw = _ler(arq)
+    cols = {str(c).lower().strip(): c for c in raw.columns}
+    fam = next((cols[k] for k in ("família de instrumento", "familia de instrumento", "família", "familia",
+                                  "instrumento") if k in cols), None)
+    if fam is None:
+        raise ValueError("Colunas ausentes: Família de instrumento")
+    nomes = raw[fam].astype(str).str.strip()
+    df = _padroniza(raw.assign(_fam_=0), {"ID": ("id", "modelo"), "Data": ("data", "date"),
+                                          "Desvio IPV (%)": ("desvio ipv (%)", "desvio ipv", "desvio", "ipv"),
+                                          "Tolerância (%)": ("tolerância (%)", "tolerancia (%)", "tolerância",
+                                                             "tolerancia", "tau"),
+                                          "Valor justo (R$ mi)": ("valor justo (r$ mi)", "valor justo", "vj"),
+                                          "_fam_": ("_fam_",)})
+    df["Família de instrumento"] = nomes.loc[df.index].values
+    return df.drop(columns=["_fam_"])[["ID", "Data", "Família de instrumento", "Desvio IPV (%)", "Tolerância (%)",
+                                       "Valor justo (R$ mi)"]]
 
 
-def estimar_credito(df: pd.DataFrame) -> pd.DataFrame:
-    out = []
-    for id_, g in df.groupby("ID", sort=False):
-        e = I.estat_credito(g["Data"], g["PD prevista (%)"] / 100, g["Taxa de default (%)"] / 100)
-        out.append({"ID": id_, "Observações": e["n"], "Início": g["Data"].iloc[0].date(), "Fim": g["Data"].iloc[-1].date(),
-                    COL_PD: 100 * e["pd"] if e["pd"] is not None else None, COL_MU_C: e["mu"], COL_SG_C: e["sigma"],
-                    "Razão DR/PD média": float((g["Taxa de default (%)"] / g["PD prevista (%)"]).mean())})
-    return pd.DataFrame(out)
+def estat_mercado(df: pd.DataFrame) -> dict:
+    """Por modelo N2: famílias de instrumento com excesso sobre a tolerância, teste t do viés e σ do excesso."""
+    out = {}
+    for (id_, fam), g in df.groupby(["ID", "Família de instrumento"], sort=False):
+        g = g.sort_values("Data")
+        e = I.estat_familia(g["Desvio IPV (%)"].values / 100, g["Tolerância (%)"].values / 100)
+        if e is None:
+            continue
+        e.update({"familia": fam, "vj": float(g["Valor justo (R$ mi)"].iloc[-1])})
+        out.setdefault(id_, []).append(e)
+    return out
 
 
-def estimar_ipv(df: pd.DataFrame) -> pd.DataFrame:
-    out = []
-    for id_, g in df.groupby("ID", sort=False):
-        e = I.estat_ipv(g["Desvio IPV (%)"])
-        out.append({"ID": id_, "Observações": e["n"], "Início": g["Data"].iloc[0].date(), "Fim": g["Data"].iloc[-1].date(),
-                    COL_MU_I: e["mu"], COL_SG_I: e["sigma"]})
-    return pd.DataFrame(out)
+def tabela_familias(est: dict) -> pd.DataFrame:
+    linhas = []
+    for id_, fams in est.items():
+        for e in fams:
+            linhas.append({"ID": id_, "Família de instrumento": e["familia"], "Observações": e["obs"],
+                           "Desvio médio": e["d_medio"], "Desvio-padrão": e["d_sd"], "Tolerância": e["tau"],
+                           "Fora da tolerância": e["fora_tol"], "Excesso médio": e["e_medio"], "t": e["t"],
+                           "Viés significativo": "Sim" if e["significativo"] else "Não", "Viés considerado": e["vies"],
+                           "σ do excesso": e["sigma"], "Valor justo (R$ mi)": e["vj"]})
+    return pd.DataFrame(linhas)
+
+
+def estat_credito(df: pd.DataFrame) -> dict:
+    """Por modelo: lista de GHs com estatísticas (viés de Jeffreys, σ líquida) e saldo da última data."""
+    out = {}
+    for (id_, gh), g in df.groupby(["ID", "GH"], sort=True):
+        g = g.sort_values("Data")
+        pd_gh = float(g["PD do GH (%)"].iloc[-1]) / 100
+        e = I.estat_gh(pd_gh, g["Contratos"].values, g["Bads"].values)
+        if e is None:
+            continue
+        e.update({"gh": int(gh), "saldo": float(g["Saldo (R$ mi)"].iloc[-1]), "inicio": g["Data"].iloc[0].date(),
+                  "fim": g["Data"].iloc[-1].date()})
+        out.setdefault(id_, []).append(e)
+    return out
+
+
+def tabela_gh(est: dict) -> pd.DataFrame:
+    linhas = []
+    for id_, ghs in est.items():
+        for e in ghs:
+            linhas.append({"ID": id_, "GH": e["gh"], "Observações": e["obs"], "Contratos médios": e["n_medio"],
+                           "PD do GH": e["pd"], "BadRate acumulada": e["br"], "IC Jeffreys inf.": e["ic_lo"],
+                           "IC Jeffreys sup.": e["ic_hi"], "Viés significativo": "Sim" if e["significativo"] else "Não",
+                           "Viés considerado": e["vies"], "σ observada": e["sigma_obs"], "σ binomial": e["sigma_bin"],
+                           "Sobredispersão": "Sim" if e["sobredispersao"] else "Não",
+                           "σ líquida": e["sigma"], "Saldo (R$ mi)": e["saldo"]})
+    return pd.DataFrame(linhas)
 
 
 def aplicar(inv_df: pd.DataFrame, est: pd.DataFrame, cols: list[str], risco: str) -> tuple[pd.DataFrame, list[str]]:
@@ -137,13 +189,22 @@ def inventario_exemplo() -> pd.DataFrame:
     df[COL_SENS] = [EXEMPLO_N3.get(i, (np.nan, None))[0] for i in df["ID"]]
     df[COL_ALT] = [EXEMPLO_N3.get(i, (None, np.nan))[1] if EXEMPLO_N3.get(i, (None, None))[1] is not None else np.nan
                    for i in df["ID"]]
-    df, _ = aplicar(df, estimar_credito(ler_serie_credito(SERIE_CRED)), [COL_PD, COL_MU_C, COL_SG_C], "Crédito")
-    df, _ = aplicar(df, estimar_ipv(ler_serie_ipv(SERIE_IPV)), [COL_MU_I, COL_SG_I], "Mercado")
     return df
 
 
-def para_modelos(df: pd.DataFrame) -> tuple[list[R.Modelo], list[str]]:
+def serie_exemplo_credito() -> pd.DataFrame:
+    return ler_serie_credito(SERIE_CRED)
+
+
+def serie_exemplo_ipv() -> pd.DataFrame:
+    return ler_serie_ipv(SERIE_IPV)
+
+
+def para_modelos(df: pd.DataFrame, serie_cred: pd.DataFrame | None = None,
+                 serie_ipv: pd.DataFrame | None = None) -> tuple[list[R.Modelo], list[str]]:
     base, avisos = C.para_modelos(df)
+    est = estat_credito(serie_cred) if serie_cred is not None and len(serie_cred) else {}
+    est_m = estat_mercado(serie_ipv) if serie_ipv is not None and len(serie_ipv) else {}
     por_id = {str(r.get("ID") or "").strip(): r for _, r in df.iterrows()}
     out = []
     for m in base:
@@ -152,13 +213,11 @@ def para_modelos(df: pd.DataFrame) -> tuple[list[R.Modelo], list[str]]:
         if m.risco == "RC":
             cl = str(r.get(COL_CLASSE) or "").strip()
             ind = {"classe": cl if cl in I.CLASSES else None,
-                   "pd": (_f(r.get(COL_PD)) or 0) / 100 or None, "lgd": (_f(r.get(COL_LGD)) or 0) / 100 or None,
-                   "mu": _f(r.get(COL_MU_C)), "sigma": _f(r.get(COL_SG_C))}
+                   "lgd": (_f(r.get(COL_LGD)) or 0) / 100 or None, "ghs": est.get(m.id)}
             if cl and cl not in I.CLASSES:
                 avisos.append(f"{m.id}: classe IRB '{cl}' inválida.")
         elif m.nivel == "N2":
-            mu, sg = _f(r.get(COL_MU_I)), _f(r.get(COL_SG_I))
-            ind = {"mu": mu / 100 if mu is not None else None, "sigma": sg / 100 if sg is not None else None}
+            ind = {"fams": est_m.get(m.id)}
         else:
             s, a = _f(r.get(COL_SENS)), _f(r.get(COL_ALT))
             ind = {"sens": s / 100 if s is not None else None, "alt": a / 100 if a is not None else None}
@@ -180,7 +239,8 @@ def calcular(p: I.ParamInt, inv: list[R.Modelo], data_base: dt.date) -> dict:
                        "Carteira ou família": m.carteira, "Tier": m.tier, "Nível": m.nivel or "-",
                        "Nota informada": m.nota or "-", "Última validação": m.data_validacao, "Válida até": valida_ate,
                        "Situação": situacao, "Nota efetiva": st, "Horizonte (anos)": o["h"],
-                       "Fonte do desvio": o["fonte"], "Fator m (crédito)": d.get("m"),
+                       "Fonte do desvio": o["fonte"], "PD média (crédito)": d.get("pd_media"),
+                       "PD estressada média": d.get("pd_estressada_media"),
                        "Desvio capital IRB": d.get("D_K"), "Desvio provisão": d.get("D_PE"),
                        "Critério": d.get("criterio", "-"), "Desvio D": o["D"], "Margem MC": o["mc"],
                        "Taxa de capital": o["D"] * (1 + o["mc"]), "Exposição (R$ mi)": m.saldo,

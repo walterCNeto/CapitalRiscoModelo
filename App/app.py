@@ -38,8 +38,8 @@ with st.sidebar:
     conf_s = st.number_input("Confiança implícita da sensibilidade N3 (%)", 60.0, 99.0, 90.0, 1.0, format="%.3f",
                              help="Nível de confiança atribuído às premissas razoavelmente possíveis da divulgação do "
                                   "CPC 46 (padrão: 90%, como no ajuste de avaliação prudente).") / 100
-    st.caption("Validade da validação: 12 meses (tier G) e 36 meses (tier M). O horizonte do desvio é o ciclo do "
-               "tier (1 ou 3 anos). Validação vencida ou ausente recebe margem de 100%.")
+    st.caption("Validade da validação: 12 meses (tier G) e 36 meses (tier M). O horizonte do desvio de crédito é o "
+               "ciclo do tier (1 ou 3 anos); em mercado, 1 ano. Validação vencida ou ausente recebe margem de 100%.")
     st.markdown("### Apetite a risco (RAS)")
     cob_min = st.number_input("Cobertura mínima de validação do inventário (%)", 0.0, 100.0, 80.0, 1.0,
                               format="%.3f") / 100
@@ -50,12 +50,20 @@ with st.sidebar:
         val_fora = tot_fora
     if st.button("Restaurar inventário de exemplo"):
         st.session_state.pop("inv", None)
+        st.session_state.pop("serie_cred", None)
+        st.session_state.pop("serie_ipv", None)
         st.session_state["editor_ver"] = st.session_state.get("editor_ver", 0) + 1
         st.rerun()
 
 p = I.ParamInt(alfa=alfa, conf_sens=conf_s)
 if "inv" not in st.session_state:
     st.session_state["inv"] = N.inventario_exemplo()
+if "serie_ipv" not in st.session_state:
+    st.session_state["serie_ipv"] = N.serie_exemplo_ipv()
+    st.session_state["serie_ipv_nome"] = "série de exemplo"
+if "serie_cred" not in st.session_state:
+    st.session_state["serie_cred"] = N.serie_exemplo_credito()
+    st.session_state["serie_cred_nome"] = "série de exemplo"
 
 st.title("Capital de risco de modelo")
 st.caption("Pilar 2 · abordagem interna: capital = exposição × desvio do modelo no quantil α × (1 + margem de "
@@ -68,7 +76,7 @@ aba_inv, aba_res, aba_des, aba_mat, aba_ras, aba_cen, aba_mem = st.tabs(
 # ----------------------------------------------------------------------------- inventário
 with aba_inv:
     st.markdown("Edite notas, tiers, níveis, datas de validação, exposições e indicadores de desvio. Crédito usa "
-                "classe IRB, PD, LGD e a razão log(DR/PD); mercado N2 usa o desvio do IPV; mercado N3 usa a "
+                "classe IRB e LGD, e a série de calibragem por GH (aba Desvio por modelo); mercado N2 usa a série do IPV por família de instrumento (aba Desvio por modelo); mercado N3 usa a "
                 "sensibilidade do CPC 46 e, se houver, a diferença para o modelo alternativo. Os indicadores podem "
                 "ser preenchidos pelas séries na aba Desvio por modelo.")
     edit = st.data_editor(
@@ -83,17 +91,8 @@ with aba_inv:
             "Exposição (R$ mi)": st.column_config.NumberColumn(format="%.3f", min_value=0.0),
             "Modelo": st.column_config.TextColumn(width="medium"),
             N.COL_CLASSE: st.column_config.SelectboxColumn(options=list(I.CLASSES), help="Só crédito."),
-            N.COL_PD: st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=100.0,
-                                                    help="Só crédito: PD prevista média da carteira."),
             N.COL_LGD: st.column_config.NumberColumn(format="%.3f", min_value=0.0, max_value=100.0,
                                                      help="Só crédito."),
-            N.COL_MU_C: st.column_config.NumberColumn(format="%.3f", help="Só crédito: média de ln(taxa de default "
-                                                                          "observada / PD prevista)."),
-            N.COL_SG_C: st.column_config.NumberColumn(format="%.3f", min_value=0.0,
-                                                      help="Só crédito: desvio-padrão de ln(DR/PD)."),
-            N.COL_MU_I: st.column_config.NumberColumn(format="%.3f", help="Só N2: desvio médio do IPV, % do VJ."),
-            N.COL_SG_I: st.column_config.NumberColumn(format="%.3f", min_value=0.0,
-                                                      help="Só N2: desvio-padrão do desvio do IPV."),
             N.COL_SENS: st.column_config.NumberColumn(format="%.3f", min_value=0.0,
                                                       help="Só N3: efeito no valor justo de premissas alternativas "
                                                            "razoavelmente possíveis (CPC 46, item 93(h)(ii))."),
@@ -101,7 +100,7 @@ with aba_inv:
                                                      help="Só N3: diferença para o modelo alternativo, % do VJ."),
         })
 
-inv, avisos = N.para_modelos(edit)
+inv, avisos = N.para_modelos(edit, st.session_state["serie_cred"], st.session_state["serie_ipv"])
 out = N.calcular(p, inv, data_base)
 det, resumo = out["detalhe"], out["resumo"]
 rs = C.ras(det, int(tot_fora), int(val_fora), cob_min)
@@ -171,91 +170,126 @@ with aba_res:
 # ----------------------------------------------------------------------------- desvio por modelo
 with aba_des:
     st.markdown(f"O desvio D é o erro do modelo no quantil de {C.pct(p.alfa)} em um ano, em % da exposição, no "
-                "horizonte do ciclo de validação do tier (h = 1 ano no tier G e 3 anos no tier M).")
-    tab_c, tab_2, tab_3 = st.tabs(["Crédito: calibração", "Mercado N2: IPV", "Mercado N3: sensibilidade"])
+                "horizonte h: em crédito, o ciclo de validação do tier (1 ano no G, 3 anos no M); em mercado, 1 ano, "
+                "porque o IPV é controle mensal e a sensibilidade do N3 já é uma faixa de premissas plausíveis.")
+    tab_c, tab_2, tab_3 = st.tabs(["Crédito: calibragem", "Mercado N2: IPV", "Mercado N3: sensibilidade"])
     with tab_c:
-        st.latex(r"m=\exp\!\left(\mu+z_\alpha\,\sigma\sqrt{h}\right),\qquad "
-                 r"D=\max\{K(m\cdot PD)-K(PD);\ (m-1)\cdot PD\cdot LGD\}")
-        st.caption("μ e σ: média e desvio-padrão de ln(taxa de default observada / PD prevista) na série do "
-                   "monitoramento. K: fórmula IRB da classe (corporativo, imobiliário, rotativo, outros varejo). "
-                   "O desvio é o maior entre a falta de capital e a falta de provisão se a PD real for m vezes a "
-                   "prevista.")
+        st.markdown("Para cada GH do modelo, compara-se a PD do GH com a BadRate observada no mesmo GH. Só conta o "
+                    "desvio que não é ruído amostral: o viés entra se a BadRate acumulada sair do intervalo de "
+                    "Jeffreys de 95%, e a volatilidade entra líquida da variância binomial, se o teste de "
+                    "sobredispersão (χ² a 95%) indicar variação além do ruído.")
+        st.latex(r"d_{g,t}=BR_{g,t}-PD_g,\qquad \sigma_g^2=\max\!\left(0,\ s^2_{d_g}-\overline{\tfrac{PD_g(1-PD_g)}"
+                 r"{n_{g,t}}}\right),\qquad PD_g^{*}=PD_g+\max\!\left(0,\ b_g+z_\alpha\,\sigma_g\sqrt{h}\right)")
+        st.latex(r"D_{RC}=\sum_g w_g\,\max\left\{K(PD_g^{*})-K(PD_g);\ (PD_g^{*}-PD_g)\cdot LGD\right\}")
+        st.caption("b_g: viés do GH (BadRate acumulada − PD), zero se dentro do intervalo de Jeffreys. w_g: "
+                   "participação do GH no saldo. K: fórmula IRB da classe do modelo.")
         sub = det[det["Risco"] == "Crédito"]
         if len(sub):
-            ind = pd.DataFrame([{"ID": m.id, N.COL_CLASSE: m.ind.get("classe"), "PD": m.ind.get("pd"),
-                                 "LGD": m.ind.get("lgd"), "μ": m.ind.get("mu"), "σ": m.ind.get("sigma")}
-                                for m in inv if m.risco == "RC"])
-            v = ind.merge(sub[["ID", "Horizonte (anos)", "Fator m (crédito)", "Desvio capital IRB", "Desvio provisão",
-                               "Critério", "Desvio D"]], on="ID")
-            st.dataframe(fmt(v, pcts=["PD", "LGD", "Desvio capital IRB", "Desvio provisão", "Desvio D"],
-                             nums=["μ", "σ", "Horizonte (anos)", "Fator m (crédito)"]), hide_index=True,
-                         width="stretch")
-        st.markdown("**Série do monitoramento (ID, Data, PD prevista (%), Taxa de default (%))**")
+            ind = pd.DataFrame([{"ID": m.id, N.COL_CLASSE: m.ind.get("classe"), "LGD": m.ind.get("lgd"),
+                                 "GHs": len(m.ind.get("ghs") or [])} for m in inv if m.risco == "RC"])
+            v = ind.merge(sub[["ID", "Horizonte (anos)", "PD média (crédito)", "PD estressada média",
+                               "Desvio capital IRB", "Desvio provisão", "Critério", "Desvio D"]], on="ID")
+            st.dataframe(fmt(v, pcts=["LGD", "PD média (crédito)", "PD estressada média", "Desvio capital IRB",
+                                      "Desvio provisão", "Desvio D"], nums=["Horizonte (anos)"]),
+                         hide_index=True, width="stretch")
+        st.markdown(f"**Série de calibragem por GH** ({st.session_state.get('serie_cred_nome', '')}): ID, Data, GH, "
+                    "PD do GH (%), Contratos, Bads, Saldo (R$ mi)")
+        c1_, c2_ = st.columns([1, 3])
         with open(N.SERIE_CRED, "rb") as fh:
-            st.download_button("Baixar série de exemplo (crédito)", fh.read(), "serie_credito_exemplo.csv", "text/csv")
-        arq = st.file_uploader("Carregar série de crédito", type=["csv", "xlsx", "xls"], key="up_cred")
-        try:
-            serie = N.ler_serie_credito(arq) if arq is not None else N.ler_serie_credito(N.SERIE_CRED)
-            est = N.estimar_credito(serie)
-            st.caption("Série carregada." if arq is not None else "Exibindo a série de exemplo.")
-            vis = est.copy()
-            for c in ("Início", "Fim"):
-                vis[c] = [d.strftime("%d/%m/%Y") for d in est[c]]
-            st.dataframe(fmt(vis, nums=[N.COL_PD, N.COL_MU_C, N.COL_SG_C, "Razão DR/PD média"]), hide_index=True,
-                         width="stretch")
-            fig = go.Figure()
-            for id_, g in serie.groupby("ID", sort=False):
-                fig.add_trace(go.Scatter(x=g["Data"], y=g["Taxa de default (%)"] / g["PD prevista (%)"],
-                                         mode="lines+markers", name=id_, marker=dict(size=4)))
-            fig.add_hline(y=1.0, line_dash="dash", line_color="#555")
-            fig.update_layout(height=340, plot_bgcolor="white", margin=dict(l=10, r=10, t=30, b=30),
-                              yaxis_title="Taxa de default / PD prevista", legend=dict(orientation="h", y=-0.2))
-            st.plotly_chart(fig, width="stretch")
-            if st.button("Aplicar PD, μ e σ ao inventário", key="ap_cred", type="primary"):
-                novo, msgs = N.aplicar(edit, est, [N.COL_PD, N.COL_MU_C, N.COL_SG_C], "Crédito")
-                st.session_state.update(inv=novo, editor_ver=st.session_state.get("editor_ver", 0) + 1, msg=msgs)
+            c1_.download_button("Baixar série de exemplo", fh.read(), "serie_credito_exemplo.csv", "text/csv")
+        arq = c2_.file_uploader("Carregar série de calibragem", type=["csv", "xlsx", "xls"], key="up_cred")
+        if arq is not None and st.session_state.get("serie_cred_nome") != arq.name:
+            try:
+                st.session_state["serie_cred"] = N.ler_serie_credito(arq)
+                st.session_state["serie_cred_nome"] = arq.name
                 st.rerun()
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Não foi possível ler a série: {e}")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Não foi possível ler a série: {e}")
+        serie = st.session_state["serie_cred"]
+        est_gh = N.estat_credito(serie)
+        sem = [m.id for m in inv if m.risco == "RC" and m.id not in est_gh]
+        if sem:
+            st.info("Modelos de crédito sem GH na série: " + ", ".join(sem) + ".")
+        tg = N.tabela_gh(est_gh)
+        if len(tg):
+            ids = list(est_gh)
+            sel = st.selectbox("Modelo", ids, key="sel_gh")
+            vg = tg[tg["ID"] == sel].drop(columns=["ID"])
+            st.dataframe(fmt(vg, pcts=["PD do GH", "BadRate acumulada", "IC Jeffreys inf.", "IC Jeffreys sup.",
+                                       "Viés considerado", "σ observada", "σ binomial", "σ líquida"],
+                             nums=["Contratos médios", "Saldo (R$ mi)"]), hide_index=True, width="stretch")
+            gs = serie[serie["ID"] == sel]
+            fig = go.Figure()
+            paleta = ["#101448", "#B08D3C", "#C00000", "#2E7D32", "#6A1B9A", "#00838F"]
+            for k_, (gh, g) in enumerate(gs.groupby("GH")):
+                cor_ = paleta[k_ % len(paleta)]
+                fig.add_trace(go.Scatter(x=g["Data"], y=100 * g["Bads"] / g["Contratos"], mode="lines+markers",
+                                         name=f"GH {gh}: BadRate", line=dict(color=cor_), marker=dict(size=4)))
+                fig.add_trace(go.Scatter(x=g["Data"], y=g["PD do GH (%)"], mode="lines", name=f"GH {gh}: PD",
+                                         line=dict(color=cor_, dash="dash"), showlegend=False))
+            fig.update_layout(height=380, plot_bgcolor="white", margin=dict(l=10, r=10, t=30, b=30),
+                              yaxis_title="% (linha cheia: BadRate; tracejada: PD do GH)",
+                              legend=dict(orientation="h", y=-0.2))
+            st.plotly_chart(fig, width="stretch")
     with tab_2:
-        st.latex(r"d\sim N(\mu,\ \sigma^2 h),\qquad D=q\ \text{tal que}\ \Pr(|d|\le q)=\alpha")
-        st.caption("d: desvio do IPV, diferença entre a marcação do modelo e a fonte independente (Anbima, B3, "
-                   "contraparte), em % do valor justo. O desvio é bilateral: errar para cima ou para baixo é falha.")
+        st.markdown("Para cada família de instrumento do modelo, o desvio do IPV é a diferença entre a marcação do "
+                    "modelo e a fonte independente (Anbima, B3, contraparte), em % do valor justo. Só conta o "
+                    "excesso sobre a tolerância da fonte (spread, dispersão entre fontes, intervalo indicativo); o "
+                    "viés entra apenas se o teste t rejeitar média zero a 95%.")
+        st.latex(r"e_{f,t}=\mathrm{sinal}(d_{f,t})\,\max\left(0,\ |d_{f,t}|-\tau_{f,t}\right),\qquad "
+                 r"e_f\sim N(b_f,\ \sigma_f^2),\qquad \Pr\left(|e_f|\le D_f\right)=\alpha")
+        st.latex(r"D_{N2}=\sum_f w_f\,D_f")
+        st.caption("b_f: média do excesso se significativa, zero caso contrário. σ_f: desvio-padrão do excesso. w_f: "
+                   "participação da família no valor justo. Horizonte de 1 ano.")
         sub = det[(det["Risco"] == "Mercado") & (det["Nível"] == "N2")]
         if len(sub):
-            ind = pd.DataFrame([{"ID": m.id, "μ": m.ind.get("mu"), "σ": m.ind.get("sigma")} for m in inv
+            ind = pd.DataFrame([{"ID": m.id, "Famílias": len(m.ind.get("fams") or [])} for m in inv
                                 if m.risco == "RM" and m.nivel == "N2"])
-            v = ind.merge(sub[["ID", "Carteira ou família", "Horizonte (anos)", "Desvio D"]], on="ID")
-            st.dataframe(fmt(v, pcts=["μ", "σ", "Desvio D"], nums=["Horizonte (anos)"]), hide_index=True,
-                         width="stretch")
-        st.markdown("**Série do IPV (ID, Data, Desvio IPV (%))**")
+            v = ind.merge(sub[["ID", "Carteira ou família", "Fonte do desvio", "Desvio D"]], on="ID")
+            st.dataframe(fmt(v, pcts=["Desvio D"]), hide_index=True, width="stretch")
+        st.markdown(f"**Série do IPV por família de instrumento** ({st.session_state.get('serie_ipv_nome', '')}): ID, "
+                    "Data, Família de instrumento, Desvio IPV (%), Tolerância (%), Valor justo (R$ mi)")
+        c1_, c2_ = st.columns([1, 3])
         with open(N.SERIE_IPV, "rb") as fh:
-            st.download_button("Baixar série de exemplo (IPV)", fh.read(), "serie_ipv_exemplo.csv", "text/csv")
-        arq = st.file_uploader("Carregar série de IPV", type=["csv", "xlsx", "xls"], key="up_ipv")
-        try:
-            serie = N.ler_serie_ipv(arq) if arq is not None else N.ler_serie_ipv(N.SERIE_IPV)
-            est = N.estimar_ipv(serie)
-            st.caption("Série carregada." if arq is not None else "Exibindo a série de exemplo.")
-            vis = est.copy()
-            for c in ("Início", "Fim"):
-                vis[c] = [d.strftime("%d/%m/%Y") for d in est[c]]
-            st.dataframe(fmt(vis, nums=[N.COL_MU_I, N.COL_SG_I]), hide_index=True, width="stretch")
-            fig = go.Figure()
-            for id_, g in serie.groupby("ID", sort=False):
-                fig.add_trace(go.Scatter(x=g["Data"], y=g["Desvio IPV (%)"], mode="lines+markers", name=id_,
-                                         marker=dict(size=4)))
-            fig.add_hline(y=0.0, line_dash="dash", line_color="#555")
-            fig.update_layout(height=340, plot_bgcolor="white", margin=dict(l=10, r=10, t=30, b=30),
-                              yaxis_title="Desvio IPV (% do VJ)", legend=dict(orientation="h", y=-0.2))
-            st.plotly_chart(fig, width="stretch")
-            if st.button("Aplicar μ e σ ao inventário", key="ap_ipv", type="primary"):
-                novo, msgs = N.aplicar(edit, est, [N.COL_MU_I, N.COL_SG_I], "Mercado")
-                st.session_state.update(inv=novo, editor_ver=st.session_state.get("editor_ver", 0) + 1, msg=msgs)
+            c1_.download_button("Baixar série de exemplo", fh.read(), "serie_ipv_exemplo.csv", "text/csv")
+        arq = c2_.file_uploader("Carregar série de IPV", type=["csv", "xlsx", "xls"], key="up_ipv")
+        if arq is not None and st.session_state.get("serie_ipv_nome") != arq.name:
+            try:
+                st.session_state["serie_ipv"] = N.ler_serie_ipv(arq)
+                st.session_state["serie_ipv_nome"] = arq.name
                 st.rerun()
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Não foi possível ler a série: {e}")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Não foi possível ler a série: {e}")
+        serie_m = st.session_state["serie_ipv"]
+        est_m = N.estat_mercado(serie_m)
+        sem = [m.id for m in inv if m.risco == "RM" and m.nivel == "N2" and m.id not in est_m]
+        if sem:
+            st.info("Modelos N2 sem família na série: " + ", ".join(sem) + ".")
+        tf = N.tabela_familias(est_m)
+        if len(tf):
+            sel = st.selectbox("Modelo", list(est_m), key="sel_fam")
+            vf = tf[tf["ID"] == sel].drop(columns=["ID"])
+            st.dataframe(fmt(vf, pcts=["Desvio médio", "Desvio-padrão", "Tolerância", "Fora da tolerância",
+                                       "Excesso médio", "Viés considerado", "σ do excesso"],
+                             nums=["t", "Valor justo (R$ mi)"]), hide_index=True, width="stretch")
+            gs = serie_m[serie_m["ID"] == sel]
+            fig = go.Figure()
+            paleta = ["#101448", "#B08D3C", "#C00000", "#2E7D32", "#6A1B9A", "#00838F"]
+            for k_, (fam_, g) in enumerate(gs.groupby("Família de instrumento", sort=False)):
+                cor_ = paleta[k_ % len(paleta)]
+                fig.add_trace(go.Scatter(x=g["Data"], y=g["Desvio IPV (%)"], mode="lines+markers", name=fam_,
+                                         line=dict(color=cor_), marker=dict(size=4)))
+                for sinal in (1, -1):
+                    fig.add_trace(go.Scatter(x=g["Data"], y=sinal * g["Tolerância (%)"], mode="lines",
+                                             line=dict(color=cor_, dash="dot", width=1), showlegend=False,
+                                             hoverinfo="skip"))
+            fig.add_hline(y=0.0, line_color="#999", line_width=1)
+            fig.update_layout(height=380, plot_bgcolor="white", margin=dict(l=10, r=10, t=30, b=30),
+                              yaxis_title="Desvio IPV, % do VJ (pontilhado: ± tolerância)",
+                              legend=dict(orientation="h", y=-0.2))
+            st.plotly_chart(fig, width="stretch")
     with tab_3:
-        st.latex(r"D=\max(s,\ a)\times\frac{z_\alpha}{z_c}\times\sqrt{h}")
+        st.latex(r"D=\max(s,\ a)\times\frac{z_\alpha}{z_c}")
         st.caption("s: efeito no valor justo de premissas alternativas razoavelmente possíveis para os insumos não "
                    "observáveis, divulgado pelo CPC 46 (item 93(h)(ii)); a: diferença para o modelo alternativo, "
                    "quando houver (Reg. UE 2016/101, art. 11). z_c: quantil implícito da sensibilidade "
@@ -371,7 +405,9 @@ with aba_mem:
     st.markdown("Memorial de cálculo em formato de paper (PDF), gerado a partir da base de entrada atual e dos "
                 "parâmetros da barra lateral: racional da modelagem por família, margem de conservadorismo, execução "
                 "do cálculo por modelo, cenários, premissa e RAS, limitações e referências.")
-    assinatura = (edit.to_csv(index=False), str(data_base), alfa, conf_s, int(tot_fora), int(val_fora), cob_min)
+    assinatura = (edit.to_csv(index=False), str(data_base), alfa, conf_s, int(tot_fora), int(val_fora), cob_min,
+                  st.session_state.get("serie_cred_nome"), len(st.session_state["serie_cred"]),
+                  st.session_state.get("serie_ipv_nome"), len(st.session_state["serie_ipv"]))
     if st.button("Gerar memorial de cálculo", type="primary"):
         with st.spinner("Gerando o memorial..."):
             cen_m, atual_m, teto_m = N.cenarios(p, inv, data_base)

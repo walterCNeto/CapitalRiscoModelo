@@ -105,6 +105,9 @@ def _bloco_tabela(titulo, tab, est, nota=None):
         itens.append(Paragraph(nota, est["nota"]))
     else:
         itens.append(Spacer(1, 6))
+    if len(getattr(tab, "_cellvalues", [])) > 26:     # tabela longa: quebra entre páginas, cabeçalho repetido
+        itens[0].keepWithNext = 1
+        return itens
     return KeepTogether(itens)
 
 
@@ -321,8 +324,9 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         f"abordagem interna, sobre {len(det)} modelos e exposição de R$ {num(tot['Exposição (R$ mi)'])} milhões. Para "
         "cada modelo, o capital é a exposição multiplicada pelo desvio do modelo no quantil de "
         f"{pct(p.alfa)} em um ano, medido em indicadores internos de performance, e por um fator de margem de "
-        "conservadorismo definido pela nota da validação independente. Em crédito, o desvio vem da série da razão "
-        "entre a taxa de default observada e a PD prevista, traduzida em falta de capital (fórmula IRB) ou de "
+        "conservadorismo definido pela nota da validação independente. Em crédito, o desvio vem da comparação, por "
+        "grupo homogêneo (GH), entre a PD do GH e a BadRate observada no mesmo GH, descontado o ruído amostral, "
+        "traduzida em falta de capital (fórmula IRB) ou de "
         "provisão, o que for maior. Em mercado de nível 2, vem da série do desvio da verificação independente de "
         "preços (IPV). Em nível 3, vem da sensibilidade do valor justo a premissas alternativas razoavelmente "
         "possíveis, divulgada pelo CPC 46, ou da diferença para um modelo alternativo. O horizonte do desvio é o "
@@ -374,34 +378,61 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         f"O quantil adotado é <i>α</i> = {pct(p.alfa)}, o mesmo nível de confiança da fórmula IRB (BCBS, 2005), com "
         f"<i>z<sub>α</sub></i> = Φ<super>−1</super>(<i>α</i>) = {num(z)}. A soma em (" + ref_eq("cap") + ") não "
         "reconhece diversificação entre modelos, o que é conservador.", est["p0"]))
-    s.append(Paragraph("3.2 Horizonte pelo tier", est["h2"]))
+    s.append(Paragraph("3.2 Horizonte do desvio", est["h2"]))
     s.append(Paragraph(
-        "Um erro de modelo permanece sem detecção, no máximo, até a validação seguinte. O horizonte <i>h</i> é o "
-        "ciclo de validação do tier: <i>h</i> = 1 ano no tier G e <i>h</i> = 3 anos no tier M. Assume-se como "
-        "premissa que o desvio evolui como passeio aleatório entre validações, de modo que sua dispersão cresce com "
-        "√<i>h</i>. Assim, o tier M, com ciclo mais longo, tem desvio maior para a mesma volatilidade medida.",
-        est["p0"]))
+        "Em crédito, um erro de calibragem permanece sem detecção, no máximo, até a validação seguinte. O horizonte "
+        "<i>h</i> é o ciclo de validação do tier: <i>h</i> = 1 ano no tier G e <i>h</i> = 3 anos no tier M. "
+        "Assume-se como premissa que o desvio evolui como passeio aleatório entre validações, de modo que sua "
+        "dispersão cresce com √<i>h</i>. Em mercado, o horizonte é de um ano para os dois tiers: no nível 2, a "
+        "verificação independente de preços é um controle mensal que ajusta a marcação quando o desvio passa da "
+        "tolerância, de modo que o erro não se acumula até a validação seguinte; no nível 3, a sensibilidade "
+        "divulgada já é uma faixa de premissas plausíveis, e não uma volatilidade que cresce no tempo.", est["p0"]))
 
-    s.append(Paragraph("3.3 Crédito: desvio de calibração da PD", est["h2"]))
+    s.append(Paragraph("3.3 Crédito: desvio de calibragem por grupo homogêneo", est["h2"]))
     s.append(Paragraph(
-        "O indicador é a razão <i>r<sub>t</sub></i> entre a taxa de default observada <i>DR<sub>t</sub></i> e a PD "
-        "prevista na mesma janela de doze meses, acompanhada no monitoramento. Assume-se ln <i>r</i> com distribuição "
-        "normal, cujos parâmetros são estimados na série de <i>n</i> observações de cada modelo:", est["p0"]))
-    s.append(eq(r"$r_t = \dfrac{DR_t}{PD_t}, \qquad \hat{\mu} = \dfrac{1}{n}\sum_{t=1}^{n} \ln r_t, \qquad "
-                r"\hat{\sigma}^2 = \dfrac{1}{n-1}\sum_{t=1}^{n} \left(\ln r_t - \hat{\mu}\right)^2$", "est"))
-    s.append(Paragraph("O fator de erro da PD no quantil <i>α</i> e no horizonte <i>h</i> é:", est["p0"]))
-    s.append(eq(r"$m = \exp\left(\hat{\mu} + z_{\alpha}\, \hat{\sigma} \sqrt{h}\right)$", "m"))
+        "No modelo de behavior, cada contrato recebe um grupo homogêneo (GH) de risco, e cada GH tem uma PD fixada na "
+        "calibragem, próxima da BadRate observada naquela faixa de score no desenvolvimento. Se o cliente piora, ele "
+        "migra para um GH de PD maior; essa migração é risco de crédito e já está capitalizada no Pilar 1. O risco de "
+        "modelo é a distância entre a PD do GH e a BadRate que o mesmo GH apresenta no monitoramento. Para cada GH "
+        "<i>g</i> e janela <i>t</i> de doze meses, com <i>n<sub>g,t</sub></i> contratos, define-se o desvio absoluto:",
+        est["p0"]))
+    s.append(eq(r"$d_{g,t} = BR_{g,t} - PD_g, \qquad BR_{g,t} = \dfrac{\mathrm{bads}_{g,t}}{n_{g,t}}$", "d"))
     s.append(Paragraph(
-        "O fator <i>m</i> é traduzido em perda de duas formas, e adota-se a maior. A primeira é a falta de capital: a "
-        "diferença entre o capital <i>K</i> da fórmula IRB (BCBS, 2005; Gordy, 2003; Vasicek, 2002) avaliado na PD "
-        "multiplicada por <i>m</i> e na PD prevista, com correlação <i>R</i> e ajuste de prazo <i>MA</i> da classe "
-        "(Tabela " + str(cont["t"] + 1) + "):", est["p0"]))
+        "O desvio absoluto, e não a razão entre BadRate e PD, faz com que GHs de PD baixa gerem naturalmente desvios "
+        "pequenos e dispensa o logaritmo quando a BadRate é zero. Só conta o desvio que não é ruído amostral, em dois "
+        "componentes. O <b>viés</b> <i>b<sub>g</sub></i> é a diferença entre a BadRate acumulada da série e a PD do GH, "
+        "considerada apenas se a PD do GH ficar fora do intervalo de Jeffreys de 95% da BadRate acumulada, que é o "
+        "teste de calibragem por grau de rating do BCE (2019). Como as janelas de doze meses se sobrepõem, o tamanho "
+        "amostral do teste é o número médio de contratos por janela:", est["p0"]))
+    s.append(eq(r"$\overline{BR}_g = \dfrac{\sum_t \mathrm{bads}_{g,t}}{\sum_t n_{g,t}}, \qquad "
+                r"b_g = \left(\overline{BR}_g - PD_g\right) \cdot \mathbf{1}\left[PD_g \notin IC^{J}_{95\%}"
+                r"\left(\overline{BR}_g;\ \bar{n}_g\right)\right]$", "vies"))
+    s.append(Paragraph(
+        "A <b>volatilidade</b> <i>σ<sub>g</sub></i> é a variância observada do desvio menos a variância que o "
+        "tamanho da amostra explica sozinho (binomial). Ela entra apenas se o teste de sobredispersão indicar "
+        "variação além do ruído binomial, isto é, se a estatística (<i>k</i> − 1) <i>s</i><super>2</super> / "
+        "<i>v<sub>g</sub></i> superar o quantil de 95% da distribuição χ<super>2</super> com <i>k</i> − 1 graus de "
+        "liberdade, sendo <i>k</i> o número de janelas:", est["p0"]))
+    s.append(eq(r"$v_g = \dfrac{1}{k}\sum_t \dfrac{PD_g\,(1 - PD_g)}{n_{g,t}}, \qquad "
+                r"\sigma_g^2 = \max\left(0,\ s^2_{d_g} - v_g\right) \cdot \mathbf{1}\left["
+                r"\dfrac{(k-1)\, s^2_{d_g}}{v_g} > \chi^2_{0{,}95;\,k-1}\right]$", "sig"))
+    s.append(Paragraph("A PD do GH no quantil <i>α</i> e no horizonte <i>h</i> é:", est["p0"]))
+    s.append(eq(r"$PD^{*}_g = PD_g + \max\left(0,\ b_g + z_{\alpha}\, \sigma_g \sqrt{h}\right)$", "pds"))
+    s.append(Paragraph(
+        "A PD estressada é traduzida em perda de duas formas, e adota-se a maior. A primeira é a falta de capital: a "
+        "diferença entre o capital <i>K</i> da fórmula IRB (BCBS, 2005; Gordy, 2003; Vasicek, 2002) avaliado na "
+        "PD estressada e na PD do GH, com correlação <i>R</i> e ajuste de prazo <i>MA</i> da "
+        "classe (Tabela " + str(cont["t"] + 1) + "). A curva de <i>K</i> é íngreme nas PDs baixas, por isso o filtro "
+        "de ruído é essencial: um desvio de 0,3% para 0,6% só gera capital se for estatisticamente real.",
+        est["p0"]))
     s.append(eq(r"$K(PD) = LGD \left[\Phi\left(\dfrac{\Phi^{-1}(PD) + \sqrt{R}\,\Phi^{-1}(0{,}999)}{\sqrt{1-R}}"
                 r"\right) - PD\right] \cdot MA$", "k"))
     s.append(Paragraph(
         "A segunda é a falta de provisão: a perda esperada adicional em doze meses que a PD subestimada deixaria de "
-        "provisionar (Resolução CMN nº 4.966/2021). O desvio de crédito é:", est["p0"]))
-    s.append(eq(r"$D_{RC} = \max\left\{K(m \cdot PD) - K(PD);\ \ (m-1) \cdot PD \cdot LGD\right\}$", "drc"))
+        "provisionar (Resolução CMN nº 4.966/2021). O desvio do modelo é a média dos desvios dos GHs ponderada pela "
+        "participação <i>w<sub>g</sub></i> de cada GH no saldo:", est["p0"]))
+    s.append(eq(r"$D_{RC} = \sum_g w_g \max\left\{K(PD^{*}_g) - K(PD_g);\ \ \left(PD^{*}_g - PD_g\right)"
+                r" \cdot LGD\right\}$", "drc"))
     s.append(_bloco_tabela(f"Tabela {nt()}. Correlação de ativos e ajuste de prazo da fórmula IRB por classe.", _tabela(
         ["Classe", "Correlação R", "Ajuste de prazo MA"],
         [["Corporativo", "0,12 a 0,24, decrescente na PD", f"Sim (M = {num(p.maturidade)})"],
@@ -416,14 +447,27 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
 
     s.append(Paragraph("3.4 Mercado de nível 2: desvio da verificação independente de preços", est["h2"]))
     s.append(Paragraph(
-        "O indicador é o desvio <i>d</i> do IPV: a diferença entre a marcação do modelo e uma fonte independente "
-        "(taxas indicativas da Anbima, ajustes da B3, cotações e avaliação da contraparte), em % do valor justo, "
-        "acompanhada mensalmente (BCBS, 2009; Resolução CMN nº 4.277/2013). Com média e desvio-padrão estimados na "
-        "série como em (" + ref_eq("est") + "), assume-se <i>d</i> normal com dispersão crescente no horizonte. O "
-        "desvio é bilateral, pois errar para cima ou para baixo é falha de apreçamento, e <i>D<sub>N2</sub></i> é o "
-        "quantil <i>α</i> do desvio absoluto:", est["p0"]))
-    s.append(eq(r"$d \sim N\left(\hat{\mu},\ \hat{\sigma}^2 h\right), \qquad "
-                r"\mathrm{Pr}\left(|d| \leq D_{N2}\right) = \alpha$", "dn2"))
+        "O indicador é o desvio <i>d</i> da verificação independente de preços (IPV): a diferença entre a marcação do "
+        "modelo e uma fonte independente (taxas indicativas da Anbima, ajustes da B3, cotações e avaliação da "
+        "contraparte), em % do valor justo, acompanhada mensalmente por família de instrumento <i>f</i> (BCBS, 2009; "
+        "Resolução CMN nº 4.277/2013). A fonte de referência tem incerteza própria (spread entre compra e venda, "
+        "dispersão entre fontes, largura do intervalo indicativo), resumida na tolerância <i>τ</i> da política de "
+        "apreçamento. Errar dentro dessa faixa não é erro de modelo, e só conta o excesso sobre a tolerância:",
+        est["p0"]))
+    s.append(eq(r"$e_{f,t} = \mathrm{sinal}\left(d_{f,t}\right) \cdot \max\left(0,\ \left|d_{f,t}\right| - "
+                r"\tau_{f,t}\right)$", "exc"))
+    s.append(Paragraph(
+        "O excesso médio é o viés da família, considerado apenas se o teste <i>t</i> rejeitar média zero a 95%, com "
+        "<i>k</i> observações; a volatilidade é o desvio-padrão do excesso:", est["p0"]))
+    s.append(eq(r"$\bar{e}_f = \dfrac{1}{k}\sum_t e_{f,t}, \qquad b_f = \bar{e}_f \cdot \mathbf{1}\left["
+                r"\dfrac{\left|\bar{e}_f\right|}{s_{e_f} / \sqrt{k}} > t_{0{,}975;\,k-1}\right], \qquad "
+                r"\sigma_f = s_{e_f}$", "bf"))
+    s.append(Paragraph(
+        "O desvio é bilateral, pois errar para cima ou para baixo é falha de apreçamento. O desvio da família é o "
+        "quantil <i>α</i> do excesso absoluto, e o do modelo é a média ponderada pela participação <i>w<sub>f</sub></i> "
+        "de cada família no valor justo:", est["p0"]))
+    s.append(eq(r"$e_f \sim N\left(b_f,\ \sigma_f^2\right), \qquad \mathrm{Pr}\left(\left|e_f\right| \leq D_f\right)"
+                r" = \alpha, \qquad D_{N2} = \sum_f w_f\, D_f$", "dn2"))
 
     s.append(Paragraph("3.5 Mercado de nível 3: sensibilidade a premissas não observáveis", est["h2"]))
     s.append(Paragraph(
@@ -435,7 +479,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "(Regulamento Delegado (UE) 2016/101, art. 11). Atribui-se à sensibilidade divulgada o nível de confiança "
         f"<i>c</i> = {pct(p.conf_sens)}, o mesmo do ajuste de avaliação prudente, e leva-se o valor ao quantil "
         "<i>α</i>:", est["p0"]))
-    s.append(eq(r"$D_{N3} = \max(s, a) \cdot \dfrac{z_{\alpha}}{z_{c}} \cdot \sqrt{h}$", "dn3"))
+    s.append(eq(r"$D_{N3} = \max(s, a) \cdot \dfrac{z_{\alpha}}{z_{c}}$", "dn3"))
     s.append(Paragraph(
         f"Com os parâmetros adotados, <i>z<sub>α</sub></i> / <i>z<sub>c</sub></i> = {num(z)} / {num(zc)} = "
         f"{num(z / zc)}. O tratamento mantém o pior caso limitado ao conjunto de avaliações plausíveis, como na "
@@ -487,24 +531,56 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     rc = [m for m in inv if m.risco == "RC"]
     if rc:
         dd = det.set_index("ID")
-        linhas = [[m.id, m.ind.get("classe") or "-", _v(m.ind.get("pd"), pct), _v(m.ind.get("lgd"), pct),
-                   _v(m.ind.get("mu"), num), _v(m.ind.get("sigma"), num), num(dd.loc[m.id, "Horizonte (anos)"]),
-                   _v(dd.loc[m.id, "Fator m (crédito)"], num), _v(dd.loc[m.id, "Desvio capital IRB"], pct),
+        lin_gh = []
+        for m in rc:
+            dv = I.desvio(m, p)
+            for g in (dv or {}).get("ghs", []):
+                lin_gh.append([m.id, str(g["gh"]), pct(g["pd"]), f"{g['n_medio']:,.0f}".replace(",", "."), pct(g["br"]),
+                               f"{pct(g['ic_lo'])} a {pct(g['ic_hi'])}", pct(g["vies"]), pct(g["sigma"]),
+                               pct(g["pd_estressada"]), pct(g["D"]), pct(g["peso"])])
+        if lin_gh:
+            s.append(_bloco_tabela(f"Tabela {nt()}. Crédito: calibragem por GH.", _tabela(
+                ["ID", "GH", "PD", "n médio", "BadRate", "IC Jeffreys 95%", "Viés b", "σ líquida", "PD*", "D<sub>g</sub>",
+                 "Peso"], lin_gh,
+                [1.15 * cm, 0.75 * cm, 1.3 * cm, 1.35 * cm, 1.35 * cm, 3.15 * cm, 1.3 * cm, 1.35 * cm, 1.4 * cm,
+                 1.3 * cm, 1.3 * cm], est, alinha_dir=[2, 3, 4, 6, 7, 8, 9, 10]), est,
+                "n médio: contratos por janela. BadRate: acumulada na série. Viés diferente de zero só quando a PD fica "
+                "fora do intervalo de Jeffreys; σ líquida igual a zero quando o teste de sobredispersão não rejeita "
+                "o ruído binomial."))
+        linhas = [[m.id, m.ind.get("classe") or "-", _v(m.ind.get("lgd"), pct),
+                   f"{dd.loc[m.id, 'Horizonte (anos)']:.0f}", _v(dd.loc[m.id, "PD média (crédito)"], pct),
+                   _v(dd.loc[m.id, "PD estressada média"], pct), _v(dd.loc[m.id, "Desvio capital IRB"], pct),
                    _v(dd.loc[m.id, "Desvio provisão"], pct), pct(dd.loc[m.id, "Desvio D"])] for m in rc]
-        s.append(_bloco_tabela(f"Tabela {nt()}. Crédito: desvio de calibração.", _tabela(
-            ["ID", "Classe", "PD", "LGD", "μ", "σ", "h", "m", "Falta de capital", "Falta de provisão", "D"], linhas,
-            [1.2 * cm, 2.3 * cm, 1.4 * cm, 1.5 * cm, 1.2 * cm, 1.1 * cm, 0.9 * cm, 1.2 * cm, 1.8 * cm, 1.8 * cm,
-             1.4 * cm], est, alinha_dir=list(range(2, 11))), est))
+        s.append(_bloco_tabela(f"Tabela {nt()}. Crédito: desvio por modelo.", _tabela(
+            ["ID", "Classe", "LGD", "h", "PD média", "PD* média", "Falta de capital", "Falta de provisão", "D"],
+            linhas, [1.2 * cm, 2.6 * cm, 1.5 * cm, 0.8 * cm, 1.7 * cm, 1.7 * cm, 2.0 * cm, 2.0 * cm, 1.6 * cm], est,
+            alinha_dir=[2, 3, 4, 5, 6, 7, 8]), est, "Médias ponderadas pela participação de cada GH no saldo."))
     n2 = [m for m in inv if m.risco == "RM" and m.nivel == "N2"]
     if n2:
         dd = det.set_index("ID")
-        linhas = [[m.id, m.carteira, _v(m.ind.get("mu"), pct), _v(m.ind.get("sigma"), pct),
-                   num(dd.loc[m.id, "Horizonte (anos)"]), pct(dd.loc[m.id, "Desvio D"]), dd.loc[m.id, "Fonte do desvio"]]
-                  for m in n2]
-        s.append(_bloco_tabela(f"Tabela {nt()}. Mercado de nível 2: desvio do IPV (% do valor justo).", _tabela(
-            ["ID", "Família", "μ", "σ", "h", "D", "Fonte"], linhas,
-            [1.3 * cm, 3.4 * cm, 1.8 * cm, 1.8 * cm, 1.0 * cm, 1.9 * cm, 3.4 * cm], est, alinha_dir=[2, 3, 4, 5]),
-            est))
+        lin_f = []
+        for m in n2:
+            dv = I.desvio(m, p)
+            for f_ in (dv or {}).get("familias", []):
+                lin_f.append([m.id, f_["familia"], pct(f_["d_medio"]), pct(f_["d_sd"]), pct(f_["tau"]),
+                              pct(f_["fora_tol"]), pct(f_["e_medio"]), num(f_["t"]), pct(f_["vies"]),
+                              pct(f_["sigma"]), pct(f_["D"]), pct(f_["peso"])])
+        if lin_f:
+            s.append(_bloco_tabela(f"Tabela {nt()}. Mercado de nível 2: IPV por família de instrumento (% do valor "
+                                   "justo).", _tabela(
+                ["ID", "Família", "d médio", "d d.p.", "τ", "Fora de τ", "e médio", "t", "Viés b", "σ", "D<sub>f</sub>",
+                 "Peso"], lin_f,
+                [1.15 * cm, 2.6 * cm, 1.2 * cm, 1.2 * cm, 1.1 * cm, 1.25 * cm, 1.2 * cm, 1.0 * cm, 1.2 * cm, 1.1 * cm,
+                 1.2 * cm, 1.3 * cm], est, alinha_dir=list(range(2, 12))), est,
+                "τ: tolerância média da fonte de referência. Fora de τ: fração das observações com desvio acima da "
+                "tolerância. Viés diferente de zero só quando o teste t rejeita média zero a 95%, isto é, |t| acima "
+                "do quantil de 97,5% da distribuição t com k − 1 graus de liberdade."))
+        linhas = [[m.id, m.carteira, str(len(m.ind.get("fams") or [])), pct(dd.loc[m.id, "Desvio D"]),
+                   dd.loc[m.id, "Fonte do desvio"]] for m in n2]
+        s.append(_bloco_tabela(f"Tabela {nt()}. Mercado de nível 2: desvio por modelo.", _tabela(
+            ["ID", "Carteira", "Famílias", "D", "Fonte"], linhas,
+            [1.3 * cm, 3.6 * cm, 1.8 * cm, 2.0 * cm, 4.2 * cm], est, alinha_dir=[2, 3]), est,
+            "D: média dos desvios das famílias ponderada pela participação no valor justo."))
     n3 = [m for m in inv if m.risco == "RM" and m.nivel != "N2"]
     if n3:
         dd = det.set_index("ID")
@@ -545,18 +621,34 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
             f"{num(r['Exposição (R$ mi)'])} milhões).", est["p0"]))
         h_ = f"{r['Horizonte (anos)']:.0f}"
         if fam == "RC" and r["Fonte do desvio"] == "Medido":
-            s.append(eq(rf"$m = \exp\left({mt(m.ind['mu'])} + {mt(z)} \times {mt(m.ind['sigma'])} \times \sqrt{{{h_}}}"
-                        rf"\right) = {mt(r['Fator m (crédito)'])}$"))
-            s.append(eq(rf"$D_{{RC}} = \max\left\{{{mp(r['Desvio capital IRB'])};\ \ ({mt(r['Fator m (crédito)'])} - 1)"
-                        rf" \times {mp(m.ind['pd'])} \times {mp(m.ind['lgd'])}\right\}} = {mp(r['Desvio D'])}$"))
+            dv = I.desvio(m, p)
+            g = max(dv["ghs"], key=lambda x: x["peso"] * x["D"])
+            s.append(Paragraph(f"No GH {g['gh']}, que mais contribui para o desvio do modelo (peso de "
+                               f"{pct(g['peso'])} no saldo):", est["p0"]))
+            s.append(eq(rf"$PD^{{*}}_{{{g['gh']}}} = {mp(g['pd'])} + \max\left(0,\ {mp(g['vies'])} + {mt(z)} \times "
+                        rf"{mp(g['sigma'])} \times \sqrt{{{h_}}}\right) = {mp(g['pd_estressada'])}$"))
+            s.append(eq(rf"$D_{{{g['gh']}}} = \max\left\{{{mp(g['D_K'])};\ \ {mp(g['D_PE'])}\right\}} = {mp(g['D'])}$"))
+            if len(dv["ghs"]) <= 3:
+                soma = r" + ".join(rf"{mt(x['peso'])} \times {mp(x['D'])}" for x in dv["ghs"])
+                s.append(eq(rf"$D_{{RC}} = {soma} = {mp(dv['D'])}$"))
+            else:
+                s.append(Paragraph("Somando os GHs com os pesos e desvios da tabela de calibragem por GH:", est["p0"]))
+                s.append(eq(rf"$D_{{RC}} = \sum_{{g=1}}^{{{len(dv['ghs'])}}} w_g\, D_g = {mp(dv['D'])}$"))
         elif fam == "N2" and r["Fonte do desvio"] == "Medido":
-            s.append(eq(rf"$d \sim N\left({mp(m.ind['mu'])},\ ({mp(m.ind['sigma'])})^2 \times {h_}\right)"
-                        rf"\ \Rightarrow\ D_{{N2}} = {mp(r['Desvio D'])}$"))
+            dv = I.desvio(m, p)
+            f_ = max(dv["familias"], key=lambda x: x["peso"] * x["D"])
+            s.append(Paragraph(f"Na família {f_['familia']}, que mais contribui para o desvio do modelo (peso de "
+                               f"{pct(f_['peso'])} no valor justo), com tolerância média de {pct(f_['tau'])}:",
+                               est["p0"]))
+            s.append(eq(rf"$e_f \sim N\left({mp(f_['vies'])},\ \left({mp(f_['sigma'])}\right)^2\right)\ \Rightarrow\ "
+                        rf"D_f = {mp(f_['D'])}$"))
+            soma = r" + ".join(rf"{mt(x['peso'])} \times {mp(x['D'])}" for x in dv["familias"])
+            s.append(eq(rf"$D_{{N2}} = {soma} = {mp(dv['D'])}$"))
         elif fam == "N3" and r["Fonte do desvio"] == "Medido":
             sv, av = m.ind.get("sens"), m.ind.get("alt")
             base_ = (rf"\max\left({mp(sv)},\ {mp(av)}\right)" if (sv is not None and av is not None)
                      else mp(sv if sv is not None else av))
-            s.append(eq(rf"$D_{{N3}} = {base_} \times {mt(z / zc)} \times \sqrt{{{h_}}} = {mp(r['Desvio D'])}$"))
+            s.append(eq(rf"$D_{{N3}} = {base_} \times {mt(z / zc)} = {mp(r['Desvio D'])}$"))
         else:
             s.append(Paragraph(f"Sem indicador; <i>D</i> = {pct(r['Desvio D'])} ({r['Fonte do desvio'].lower()}).",
                                est["p0"]))
@@ -616,11 +708,18 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
         "independente (segunda linha). Na revisão anual, reavaliam-se o nível de confiança, a confiança implícita "
         "da sensibilidade de nível 3, as classes IRB, a margem de conservadorismo e a coerência entre o desvio "
         "medido e a nota da validação. As principais limitações, incorporadas como premissas, são:", est["p"]))
-    for t in ("o logaritmo da razão de calibração e o desvio do IPV são tratados como normais; séries curtas tornam "
+    for t in ("no IPV, o excesso sobre a tolerância é tratado como normal, embora tenha massa em zero quando o "
+              "desvio fica dentro da faixa; a tolerância de cada família deve refletir a incerteza real da fonte;",
+              "o horizonte de um ano em mercado supõe que o IPV mensal corrige a marcação; famílias sem IPV regular "
+              "devem ter o horizonte revisto;",
+              "a BadRate de cada GH é tratada como binomial e os desvios de calibragem como normais; "
+              "séries curtas tornam "
               "o quantil de 99,9% dependente dessa hipótese;",
-              "janelas de desempenho sobrepostas no monitoramento de crédito podem reduzir a volatilidade medida, o "
-              "que recomenda observações pouco sobrepostas;",
-              "o crescimento do desvio com √h supõe passeio aleatório entre validações;",
+              "janelas de doze meses sobrepostas no monitoramento de crédito: o teste de Jeffreys usa o número médio "
+              "de contratos por janela, e a volatilidade medida pode ficar subestimada;",
+              "GHs com poucos contratos tendem a não rejeitar o ruído binomial, e o desvio desses GHs fica igual a "
+              "zero; a margem de conservadorismo da nota é o que cobre essa incerteza;",
+              "em crédito, o crescimento do desvio com √h supõe passeio aleatório entre validações;",
               "a sensibilidade do nível 3 é tratada como equivalente a um quantil de "
               f"{pct(p.conf_sens)}; a convenção de cada mesa para premissas razoavelmente possíveis deve ser "
               "documentada;",
@@ -671,6 +770,7 @@ def gerar_pdf_interno(p, inv: list, data_base: dt.date, out: dict, rs: dict, cen
     for r_ in refs:
         s.append(Paragraph(r_, est["ref"]))
 
+    s = [x for item in s for x in (item if isinstance(item, list) else [item])]
     buf = io.BytesIO()
     titulo = "Capital econômico para risco de modelo: memorial de cálculo"
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2.4 * cm, rightMargin=2.4 * cm, topMargin=2.2 * cm,

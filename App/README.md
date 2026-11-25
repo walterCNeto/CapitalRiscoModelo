@@ -5,13 +5,16 @@ indicadores internos de performance:
 
 Capital_i = Exposição_i × D_i(α, h) × (1 + MC(nota_i))
 
-- **Crédito (behavior de PD):** razão taxa de default observada / PD prevista; m = exp(μ + z_α σ √h);
-  D = max{K(m·PD) − K(PD) (fórmula IRB da classe); (m − 1)·PD·LGD (provisão)}.
-- **Mercado N2:** desvio do IPV (marcação contra fonte independente), quantil bilateral de |d| com d ~ N(μ, σ² h).
+- **Crédito (behavior de PD), por GH:** d = BadRate do GH − PD do GH; viés só se a PD sair do intervalo de
+  Jeffreys de 95%; volatilidade líquida do ruído binomial, só se o teste de sobredispersão (χ² a 95%) rejeitar o ruído;
+  PD* = PD + max(0, viés + z_α σ √h); D = Σ w_g max{K(PD*) − K(PD); (PD* − PD)·LGD}.
+- **Mercado N2, por família de instrumento:** excesso do desvio do IPV sobre a tolerância da fonte,
+  e = sinal(d)·max(0, |d| − τ); viés só se o teste t rejeitar média zero; D_f = quantil bilateral de |e|;
+  D = Σ w_f D_f pelo valor justo; horizonte de 1 ano (IPV mensal).
 - **Mercado N3:** sensibilidade a premissas alternativas razoavelmente possíveis (CPC 46, 93(h)(ii)) ou diferença
-  para o modelo alternativo, levada ao quantil α: D = max(s, a) × z_α / z_c × √h.
+  para o modelo alternativo, levada ao quantil α: D = max(s, a) × z_α / z_c; horizonte de 1 ano.
 - **Margem de conservadorismo:** pela nota da validação (matriz A a I), 0 na nota A e 100% sem validação ou vencida.
-- **Tier:** define a validade (12 ou 36 meses) e o horizonte h do desvio (1 ou 3 anos).
+- **Tier:** define a validade (12 ou 36 meses) e, em crédito, o horizonte h do desvio (1 ou 3 anos).
 
 ## Como rodar
 
@@ -25,8 +28,9 @@ streamlit run app.py
 
 - **Inventário:** modelos, notas, tiers, datas, exposições e indicadores de desvio (editável).
 - **Resultado:** capital por família e por modelo, com a régua padronizada anterior como referência.
-- **Desvio por modelo:** cálculo do desvio por família; upload das séries de crédito (ID, Data, PD prevista (%),
-  Taxa de default (%)) e de IPV (ID, Data, Desvio IPV (%)) para preencher o inventário.
+- **Desvio por modelo:** cálculo do desvio por família; upload da série de calibragem por GH (ID, Data, GH, PD do GH (%),
+  Contratos, Bads, Saldo (R$ mi)) e de IPV por família (ID, Data, Família de instrumento,
+  Desvio IPV (%), Tolerância (%), Valor justo (R$ mi)), que entram direto no cálculo.
 - **Matriz e margem:** margem de conservadorismo por nota.
 - **Premissa e RAS:** premissa prudencial do escopo e cobertura de validação do inventário total.
 - **Cenários:** capital se todos, ou só os pendentes, fossem validados com cada nota.
